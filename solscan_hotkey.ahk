@@ -17,12 +17,12 @@ NOTIFICATION_DURATION := 2000  ; milliseconds
 SELECTION_DELAY := 100         ; delay after selection before copy
 
 ; ============================================================================
-; MAIN HOTKEY: XButton1 (Side Mouse Button - typically "Back" button)
+; MAIN HOTKEY: XButton2 (Side Mouse Button - typically "Forward" button)
 ; ============================================================================
-; Change to XButton2 if you prefer the "Forward" button
+; Change to XButton1 if you prefer the "Back" button
 ; ============================================================================
 
-XButton1::HandleSolscanLookup()
+XButton2::HandleSolscanLookup()
 
 ; ============================================================================
 ; Core Function: Capture text and open Solscan
@@ -34,19 +34,28 @@ HandleSolscanLookup() {
     A_Clipboard := ""
 
     ; Try to capture text under cursor
-    address := CaptureTextUnderCursor()
+    capturedText := CaptureTextUnderCursor()
 
     ; Restore clipboard immediately
     A_Clipboard := ClipSaved
     ClipSaved := ""
 
-    ; Validate and process
-    if (address != "") {
-        if (IsValidSolanaAddress(address)) {
+    ; Process captured text
+    if (capturedText != "") {
+        ; First, try to extract an address from the text (handles URLs and mixed content)
+        address := ExtractAddressFromText(capturedText)
+
+        ; If extraction found nothing, check if the whole text is a valid address
+        if (address == "" && IsValidSolanaAddress(capturedText)) {
+            address := capturedText
+        }
+
+        ; Validate and open
+        if (address != "" && IsValidSolanaAddress(address)) {
             OpenSolscan(address)
             ShowNotification("Opening Solscan...", address)
         } else {
-            ShowNotification("Not a valid Solana address", address)
+            ShowNotification("Not a valid Solana address", capturedText)
         }
     } else {
         ShowNotification("No text captured", "Hover over an address and try again")
@@ -66,8 +75,7 @@ CaptureTextUnderCursor() {
         }
     }
 
-    ; Strategy 2: Smart word selection
-    ; Double-click to select word under cursor
+    ; Strategy 2: Double-click to select word under cursor
     Click
     Sleep 50
     Click
@@ -89,8 +97,7 @@ CaptureTextUnderCursor() {
     Send "^c"
     if ClipWait(0.3) {
         if (A_Clipboard != "" && StrLen(A_Clipboard) > 0) {
-            ; Try to extract address from line
-            return ExtractAddressFromText(A_Clipboard)
+            return A_Clipboard
         }
     }
 
@@ -146,7 +153,8 @@ ExtractAddressFromText(text) {
 ; ============================================================================
 
 OpenSolscan(address) {
-    url := "https://solscan.io/account/" . address
+    ; Custom Solscan URL with your preferred filters
+    url := "https://solscan.io/account/" . address . "?activity_type=ACTIVITY_SPL_TRANSFER&exclude_amount_zero=true&remove_spam=true&value=100&value=&token_address=So11111111111111111111111111111111111111111&page_size=10#transfers"
     Run url
 }
 
@@ -160,10 +168,10 @@ ShowNotification(title, message) {
 }
 
 ; ============================================================================
-; Optional: XButton2 as alternative trigger
+; Optional: XButton1 as alternative trigger
 ; ============================================================================
-; Uncomment below to enable the "Forward" button as well:
-; XButton2::HandleSolscanLookup()
+; Uncomment below to enable the "Back" button as well:
+; XButton1::HandleSolscanLookup()
 
 ; ============================================================================
 ; Exit Hotkey: Ctrl+Alt+Q to quit script
@@ -183,4 +191,4 @@ ShowNotification(title, message) {
 A_TrayMenu.Delete()
 A_TrayMenu.Add("Reload Script", (*) => Reload())
 A_TrayMenu.Add("Exit", (*) => ExitApp())
-TraySetToolTip("Solscan Hotkey Active (XButton1)")
+A_IconTip := "Solscan Hotkey Active (XButton2)"
