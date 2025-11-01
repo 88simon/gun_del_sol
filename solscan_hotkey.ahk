@@ -16,13 +16,53 @@ CoordMode "Mouse", "Screen"
 NOTIFICATION_DURATION := 2000  ; milliseconds
 SELECTION_DELAY := 100         ; delay after selection before copy
 
+; Global variables to track current page and exclusions
+global currentMainAddress := ""
+global excludedAddressesList := []
+
 ; ============================================================================
 ; MAIN HOTKEY: XButton2 (Side Mouse Button - typically "Forward" button)
 ; ============================================================================
-; Change to XButton1 if you prefer the "Back" button
+; Single click: Open new address
+; Double click: Add exclusion filter to current page
 ; ============================================================================
 
-XButton2::HandleSolscanLookup()
+; Global variables for double-click detection
+global lastClickTime := 0
+global doubleClickThreshold := 300  ; milliseconds
+global pendingTimer := ""
+
+XButton2::
+{
+    global lastClickTime
+    global doubleClickThreshold
+    global pendingTimer
+
+    currentTime := A_TickCount
+    timeSinceLastClick := currentTime - lastClickTime
+
+    if (timeSinceLastClick < doubleClickThreshold && timeSinceLastClick > 0) {
+        ; This is a double-click - add exclusion
+        ; Cancel the pending single-click timer
+        if (pendingTimer != "") {
+            SetTimer(pendingTimer, 0)
+            pendingTimer := ""
+        }
+        HandleSolscanLookupWithExclude()
+        lastClickTime := 0  ; Reset to prevent triple-click from triggering
+    } else {
+        ; This is a single click - wait to see if double-click follows
+        lastClickTime := currentTime
+        pendingTimer := () => ExecuteSingleClick()
+        SetTimer(pendingTimer, -doubleClickThreshold)
+    }
+}
+
+ExecuteSingleClick() {
+    global pendingTimer
+    pendingTimer := ""
+    HandleSolscanLookup()
+}
 
 ; ============================================================================
 ; Core Function: Capture text and open Solscan
@@ -52,8 +92,73 @@ HandleSolscanLookup() {
 
         ; Validate and open
         if (address != "" && IsValidSolanaAddress(address)) {
+            ; Store this as the current main address and reset exclusions
+            global currentMainAddress := address
+            global excludedAddressesList := []
+
             OpenSolscan(address)
             ShowNotification("Opening Solscan...", address)
+        } else {
+            ShowNotification("Not a valid Solana address", capturedText)
+        }
+    } else {
+        ShowNotification("No text captured", "Hover over an address and try again")
+    }
+}
+
+; ============================================================================
+; Core Function: Capture text and open Solscan WITH EXCLUDE FILTER
+; ============================================================================
+
+HandleSolscanLookupWithExclude() {
+    global currentMainAddress
+    global excludedAddressesList
+
+    ; Check if we have a main address to work with
+    if (currentMainAddress == "") {
+        ShowNotification("No main address set", "Use XButton2 first to open an address")
+        return
+    }
+
+    ; Save original clipboard
+    ClipSaved := ClipboardAll()
+    A_Clipboard := ""
+
+    ; Try to capture text under cursor
+    capturedText := CaptureTextUnderCursor()
+
+    ; Restore clipboard immediately
+    A_Clipboard := ClipSaved
+    ClipSaved := ""
+
+    ; Process captured text
+    if (capturedText != "") {
+        ; First, try to extract an address from the text (handles URLs and mixed content)
+        addressToExclude := ExtractAddressFromText(capturedText)
+
+        ; If extraction found nothing, check if the whole text is a valid address
+        if (addressToExclude == "" && IsValidSolanaAddress(capturedText)) {
+            addressToExclude := capturedText
+        }
+
+        ; Validate the address to exclude
+        if (addressToExclude != "" && IsValidSolanaAddress(addressToExclude)) {
+            ; Add to exclusion list if not already there
+            alreadyExcluded := false
+            for index, addr in excludedAddressesList {
+                if (addr == addressToExclude) {
+                    alreadyExcluded := true
+                    break
+                }
+            }
+
+            if (!alreadyExcluded) {
+                excludedAddressesList.Push(addressToExclude)
+            }
+
+            ; Reload the current page with updated exclusions
+            ReloadCurrentPageWithExclusions()
+            ShowNotification("Excluded address added", addressToExclude)
         } else {
             ShowNotification("Not a valid Solana address", capturedText)
         }
@@ -159,6 +264,51 @@ OpenSolscan(address) {
 }
 
 ; ============================================================================
+; Action: Reload Current Page with Updated Exclusions
+; ============================================================================
+
+ReloadCurrentPageWithExclusions() {
+    global currentMainAddress
+    global excludedAddressesList
+
+    ; Build the exclusion parameter from the list
+    ; Format: to_address=!Address1,!Address2,!Address3
+    excludeParam := ""
+
+    for index, excludeAddr in excludedAddressesList {
+        if (excludeAddr != "") {
+            if (excludeParam != "") {
+                excludeParam .= ","
+            }
+            excludeParam .= "!" . excludeAddr
+        }
+    }
+
+    ; Build URL with exclusion filter for the CURRENT main address
+    url := "https://solscan.io/account/" . currentMainAddress . "?activity_type=ACTIVITY_SPL_TRANSFER&exclude_amount_zero=true&remove_spam=true"
+
+    if (excludeParam != "") {
+        url .= "&to_address=" . excludeParam
+    }
+
+    url .= "&value=100&value=undefined&token_address=So11111111111111111111111111111111111111111&page_size=10#transfers"
+
+    ; Copy URL to clipboard
+    A_Clipboard := url
+    Sleep 100  ; Give clipboard time to update
+
+    ; Focus browser and navigate to URL using address bar
+    ; Ctrl+L selects address bar in most browsers
+    Send "^l"
+    Sleep 100
+    ; Paste the URL
+    Send "^v"
+    Sleep 100
+    ; Press Enter to navigate
+    Send "{Enter}"
+}
+
+; ============================================================================
 ; UI Feedback: Toast Notification
 ; ============================================================================
 
@@ -166,12 +316,6 @@ ShowNotification(title, message) {
     ToolTip title . "`n" . message
     SetTimer () => ToolTip(), -NOTIFICATION_DURATION
 }
-
-; ============================================================================
-; Optional: XButton1 as alternative trigger
-; ============================================================================
-; Uncomment below to enable the "Back" button as well:
-; XButton1::HandleSolscanLookup()
 
 ; ============================================================================
 ; Exit Hotkey: Ctrl+Alt+Q to quit script
@@ -191,4 +335,4 @@ ShowNotification(title, message) {
 A_TrayMenu.Delete()
 A_TrayMenu.Add("Reload Script", (*) => Reload())
 A_TrayMenu.Add("Exit", (*) => ExitApp())
-A_IconTip := "Solscan Hotkey Active (XButton2)"
+A_IconTip := "Solscan Hotkey Active`nXButton2 single: Open address`nXButton2 double: Add exclusion"
