@@ -9,17 +9,21 @@ set SCRIPT_DIR=%~dp0
 set SCRIPT_NAME=solscan_hotkey.ahk
 set SCRIPT_PATH=%SCRIPT_DIR%%SCRIPT_NAME%
 
-REM Check if AutoHotkey is installed
-where ahk >nul 2>nul
+REM Check if AutoHotkey v2 is installed
+where AutoHotkeyU64.exe >nul 2>nul
 if %ERRORLEVEL% NEQ 0 (
-    where AutoHotkey.exe >nul 2>nul
+    where AutoHotkey64.exe >nul 2>nul
     if %ERRORLEVEL% NEQ 0 (
-        echo ERROR: AutoHotkey is not installed or not in PATH
-        echo.
-        echo Please install AutoHotkey from: https://www.autohotkey.com/
-        echo.
-        pause
-        exit /b 1
+        where AutoHotkey.exe >nul 2>nul
+        if %ERRORLEVEL% NEQ 0 (
+            echo ERROR: AutoHotkey v2 is not installed or not in PATH
+            echo.
+            echo Please install AutoHotkey v2 from: https://www.autohotkey.com/
+            echo Make sure to install v2.0+, not v1.1
+            echo.
+            pause
+            exit /b 1
+        )
     )
 )
 
@@ -32,7 +36,9 @@ if not exist "%SCRIPT_PATH%" (
     exit /b 1
 )
 
-REM Kill existing instance if running
+REM Kill existing instance if running (try all possible v2 executables)
+taskkill /F /IM AutoHotkeyU64.exe /FI "WINDOWTITLE eq solscan_hotkey.ahk*" >nul 2>nul
+taskkill /F /IM AutoHotkey64.exe /FI "WINDOWTITLE eq solscan_hotkey.ahk*" >nul 2>nul
 taskkill /F /IM AutoHotkey.exe /FI "WINDOWTITLE eq solscan_hotkey.ahk*" >nul 2>nul
 
 REM Start the script

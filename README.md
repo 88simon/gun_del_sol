@@ -13,17 +13,18 @@ Instantly open Solscan for any Solana address by hovering and clicking your side
 
 ## Requirements
 
-- **Windows** (Vista or later)
-- **AutoHotkey v1.1+** - [Download here](https://www.autohotkey.com/)
+- **Windows** (10 or later)
+- **AutoHotkey v2.0+** - [Download here](https://www.autohotkey.com/)
 - A mouse with side buttons (XButton1/XButton2)
 
 ## Installation
 
-### Step 1: Install AutoHotkey
+### Step 1: Install AutoHotkey v2
 
-1. Download AutoHotkey from [https://www.autohotkey.com/](https://www.autohotkey.com/)
+1. Download AutoHotkey v2 from [https://www.autohotkey.com/](https://www.autohotkey.com/)
 2. Run the installer and follow the prompts
 3. Choose "Install" (default options are fine)
+4. **Important**: Make sure you install v2.0+, not v1.1
 
 ### Step 2: Run the Script
 
@@ -66,12 +67,12 @@ The script is set to use **XButton1** (usually "Back" button).
 
 **To change to XButton2 ("Forward" button):**
 1. Open `solscan_hotkey.ahk` in Notepad
-2. Find line ~30: `XButton1::`
-3. Change to: `XButton2::`
+2. Find line 25: `XButton1::HandleSolscanLookup()`
+3. Change to: `XButton2::HandleSolscanLookup()`
 4. Save and reload the script (right-click tray icon → Reload)
 
 **To use both buttons:**
-Uncomment lines 140-142 in the script.
+Uncomment line 166 in the script.
 
 ## Text Capture Strategies
 
@@ -118,7 +119,7 @@ An address is considered valid if:
 ### "Clipboard is disrupted"
 
 The script saves and restores your clipboard automatically. If issues persist:
-- Increase `SELECTION_DELAY` in the script (line 16)
+- Increase `SELECTION_DELAY` in the script (line 17)
 - Close clipboard managers temporarily
 
 ### "Works in browser but not in Terminal/IDE"
@@ -139,16 +140,16 @@ Ensure the address is:
 
 ### Change Notification Duration
 
-Edit line 15:
+Edit line 16:
 ```ahk
-global NOTIFICATION_DURATION := 2000  ; milliseconds (2 seconds)
+NOTIFICATION_DURATION := 2000  ; milliseconds (2 seconds)
 ```
 
 ### Change Selection Timing
 
-Edit line 16:
+Edit line 17:
 ```ahk
-global SELECTION_DELAY := 100  ; increase if selection fails
+SELECTION_DELAY := 100  ; increase if selection fails
 ```
 
 ### Use Different URL
