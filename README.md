@@ -6,7 +6,7 @@ Instantly open Solscan for any Solana address by hovering and clicking your side
 
 - **Single-click XButton2**: Open any Solana address in Solscan with customized filters
 - **Double-click XButton2**: Add exclusion filters to the current Solscan page
-- **Shift+XButton2**: Register addresses for Telegram monitoring (requires monitor service)
+- **Ctrl+XButton2**: Register addresses for Telegram monitoring (requires monitor service)
 - Smart text detection with multiple fallback strategies
 - Validates Solana base58 addresses (32-44 characters)
 - Safe clipboard handling - restores your clipboard after use
@@ -88,7 +88,7 @@ Register addresses to monitor for large transfers via Telegram alerts:
 
 **Step 2: Register Addresses**
 1. Hover over any Solana address you want to monitor
-2. **Hold Shift + Click XButton2**
+2. **Hold Ctrl + Click XButton2**
 3. A tooltip confirms registration: "Monitoring registered"
 4. If service is offline, you'll see: "Monitor service offline"
 
@@ -133,7 +133,7 @@ An address is considered valid if:
 ### Mouse Hotkeys
 - **Single-click XButton2** - Open Solana address in Solscan
 - **Double-click XButton2** - Add exclusion filter to current Solscan page
-- **Shift + XButton2** - Register address for Telegram monitoring
+- **Ctrl + XButton2** - Register address for Telegram monitoring
 
 ### Keyboard Shortcuts
 - **Ctrl+Alt+Q** - Exit the script (with confirmation)
@@ -151,7 +151,7 @@ An address is considered valid if:
 3. Check if your mouse software is intercepting the button
 4. Run `test_mouse_buttons.ahk` to identify which button is which
 
-### "Monitor service offline" when using Shift+XButton2
+### "Monitor service offline" when using Ctrl+XButton2
 
 1. Ensure Python 3.8+ is installed: Open Command Prompt and type `python --version`
 2. Start the monitoring service: Double-click `start_monitor_service.bat`

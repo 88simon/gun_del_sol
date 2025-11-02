@@ -34,12 +34,12 @@ global doubleClickThreshold := 300  ; milliseconds
 global pendingTimer := ""
 
 ; ============================================================================
-; TELEGRAM MONITOR HOTKEY: Shift+XButton2
+; TELEGRAM MONITOR HOTKEY: Ctrl+XButton2
 ; ============================================================================
 ; Register address for Telegram monitoring of large transfers
 ; ============================================================================
 
-+XButton2::HandleTelegramRegister()
+^XButton2::HandleTelegramRegister()
 
 XButton2::
 {
@@ -418,4 +418,4 @@ ShowNotification(title, message) {
 A_TrayMenu.Delete()
 A_TrayMenu.Add("Reload Script", (*) => Reload())
 A_TrayMenu.Add("Exit", (*) => ExitApp())
-A_IconTip := "Solscan Hotkey Active`nXButton2 single: Open address`nXButton2 double: Add exclusion"
+A_IconTip := "Solscan Hotkey Active`nXButton2 single: Open address`nXButton2 double: Add exclusion`nCtrl+XButton2: Monitor address"
