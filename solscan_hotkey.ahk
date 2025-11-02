@@ -15,6 +15,7 @@ CoordMode "Mouse", "Screen"
 ; Configuration
 NOTIFICATION_DURATION := 2000  ; milliseconds
 SELECTION_DELAY := 100         ; delay after selection before copy
+LOCAL_SERVER_URL := "http://localhost:5001/register"  ; Telegram monitor service
 
 ; Global variables to track current page and exclusions
 global currentMainAddress := ""
@@ -31,6 +32,14 @@ global excludedAddressesList := []
 global lastClickTime := 0
 global doubleClickThreshold := 300  ; milliseconds
 global pendingTimer := ""
+
+; ============================================================================
+; TELEGRAM MONITOR HOTKEY: Shift+XButton2
+; ============================================================================
+; Register address for Telegram monitoring of large transfers
+; ============================================================================
+
++XButton2::HandleTelegramRegister()
 
 XButton2::
 {
@@ -308,6 +317,78 @@ ReloadCurrentPageWithExclusions() {
     Sleep 100
     ; Press Enter to navigate
     Send "{Enter}"
+}
+
+; ============================================================================
+; Telegram Monitor: Register Address for Monitoring
+; ============================================================================
+
+HandleTelegramRegister() {
+    ; Clear any pending clipboard operations
+    A_Clipboard := ""
+
+    ; Save original clipboard
+    ClipSaved := ClipboardAll()
+
+    ; Try to capture text under cursor
+    capturedText := CaptureTextUnderCursor()
+
+    ; Restore clipboard immediately
+    A_Clipboard := ClipSaved
+    ClipSaved := ""
+
+    ; Process captured text
+    if (capturedText != "") {
+        ; First, try to extract an address from the text
+        address := ExtractAddressFromText(capturedText)
+
+        ; If extraction found nothing, check if the whole text is a valid address
+        if (address == "" && IsValidSolanaAddress(capturedText)) {
+            address := capturedText
+        }
+
+        ; Validate and register for monitoring
+        if (address != "" && IsValidSolanaAddress(address)) {
+            ; Send to local monitoring service
+            RegisterAddressWithMonitor(address)
+        } else {
+            ShowNotification("Invalid address", "Cannot register for monitoring")
+        }
+    } else {
+        ShowNotification("No text captured", "Hover over an address and try again")
+    }
+}
+
+RegisterAddressWithMonitor(address) {
+    ; Build JSON payload
+    jsonData := '{"address":"' . address . '","timestamp":"' . A_Now . '"}'
+
+    ; Create temporary file for curl
+    tempFile := A_Temp . "\solscan_register.json"
+    try {
+        FileDelete tempFile
+    }
+    FileAppend jsonData, tempFile
+
+    ; Send POST request to local server
+    command := 'curl -X POST "' . LOCAL_SERVER_URL . '" -H "Content-Type: application/json" -d @"' . tempFile . '" 2>&1'
+
+    try {
+        result := RunWait('cmd /c ' . command, , "Hide")
+
+        if (result = 0) {
+            ShowNotification("Monitoring registered", address)
+        } else {
+            ShowNotification("Monitor service offline", "Start Python service first")
+        }
+    } catch {
+        ShowNotification("Monitor service offline", "Start Python service first")
+    }
+
+    ; Cleanup
+    try {
+        FileDelete tempFile
+    }
 }
 
 ; ============================================================================

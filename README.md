@@ -4,7 +4,9 @@ Instantly open Solscan for any Solana address by hovering and clicking your side
 
 ## Features
 
-- Click side mouse button (XButton1) over any Solana address to open Solscan
+- **Single-click XButton2**: Open any Solana address in Solscan with customized filters
+- **Double-click XButton2**: Add exclusion filters to the current Solscan page
+- **Shift+XButton2**: Register addresses for Telegram monitoring (requires monitor service)
 - Smart text detection with multiple fallback strategies
 - Validates Solana base58 addresses (32-44 characters)
 - Safe clipboard handling - restores your clipboard after use
@@ -13,9 +15,14 @@ Instantly open Solscan for any Solana address by hovering and clicking your side
 
 ## Requirements
 
+### Core Requirements
 - **Windows** (10 or later)
 - **AutoHotkey v2.0+** - [Download here](https://www.autohotkey.com/)
 - A mouse with side buttons (XButton1/XButton2)
+
+### Optional (for Telegram Monitoring)
+- **Python 3.8+** - [Download here](https://www.python.org/downloads/)
+- **Flask** - Installed automatically by the launcher script
 
 ## Installation
 
@@ -45,13 +52,55 @@ Instantly open Solscan for any Solana address by hovering and clicking your side
 
 ## Usage
 
-### Basic Usage
+### Basic Solscan Lookup
 
 1. Hover your mouse over any Solana address (in browser, Discord, code editor, etc.)
-2. Click your **side mouse button** (typically the "Back" button - XButton1)
+2. **Single-click XButton2** (Forward button)
 3. The address will be captured and validated
-4. If valid, Solscan opens automatically in your default browser
+4. If valid, Solscan opens automatically with custom filters:
+   - SOL transfers only
+   - Excludes zero-amount transactions
+   - Removes spam tokens
+   - Minimum value: 100 SOL
 5. A tooltip shows success or error message
+
+### Exclusion Filters (Advanced)
+
+When viewing a Solscan page, you can filter out specific addresses:
+
+1. While viewing an address on Solscan, hover over an address you want to exclude
+2. **Double-click XButton2**
+3. The current page will reload with that address added to the exclusion filter
+4. Repeat to add multiple exclusions
+5. The exclusion list resets when you open a new address (single-click)
+
+**Example use case:** Filtering out known exchange wallets or your own addresses to focus on new counterparties.
+
+### Telegram Monitoring (Phase 1 MVP)
+
+Register addresses to monitor for large transfers via Telegram alerts:
+
+**Step 1: Start the Monitoring Service**
+1. Install Python 3.8+ if not already installed
+2. Double-click `start_monitor_service.bat`
+3. The Flask service will start on `http://localhost:5001`
+4. Keep this window open while monitoring
+
+**Step 2: Register Addresses**
+1. Hover over any Solana address you want to monitor
+2. **Hold Shift + Click XButton2**
+3. A tooltip confirms registration: "Monitoring registered"
+4. If service is offline, you'll see: "Monitor service offline"
+
+**Step 3: View Registered Addresses**
+- Open `monitored_addresses.json` in the script folder
+- Or visit `http://localhost:5001/addresses` in your browser
+
+**Current Limitations (Phase 1):**
+- Only stores addresses locally (no actual monitoring yet)
+- No Telegram notifications (coming in Phase 2)
+- No transaction polling (coming in Phase 2)
+- Default threshold: 100 SOL (configurable in future phases)
 
 ### Examples of Valid Addresses
 
@@ -61,18 +110,6 @@ So11111111111111111111111111111111111111112
 EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
 ```
 
-### Mouse Button Configuration
-
-The script is set to use **XButton1** (usually "Back" button).
-
-**To change to XButton2 ("Forward" button):**
-1. Open `solscan_hotkey.ahk` in Notepad
-2. Find line 25: `XButton1::HandleSolscanLookup()`
-3. Change to: `XButton2::HandleSolscanLookup()`
-4. Save and reload the script (right-click tray icon → Reload)
-
-**To use both buttons:**
-Uncomment line 166 in the script.
 
 ## Text Capture Strategies
 
@@ -93,7 +130,12 @@ An address is considered valid if:
 
 ## Controls
 
-- **XButton1** - Trigger Solscan lookup
+### Mouse Hotkeys
+- **Single-click XButton2** - Open Solana address in Solscan
+- **Double-click XButton2** - Add exclusion filter to current Solscan page
+- **Shift + XButton2** - Register address for Telegram monitoring
+
+### Keyboard Shortcuts
 - **Ctrl+Alt+Q** - Exit the script (with confirmation)
 - **Tray icon right-click** - Reload or Exit script
 
@@ -107,7 +149,15 @@ An address is considered valid if:
    - Run `solscan_hotkey.ahk`
    - Click side button - you should see a tooltip
 3. Check if your mouse software is intercepting the button
-4. Try the other side button (change XButton1 to XButton2)
+4. Run `test_mouse_buttons.ahk` to identify which button is which
+
+### "Monitor service offline" when using Shift+XButton2
+
+1. Ensure Python 3.8+ is installed: Open Command Prompt and type `python --version`
+2. Start the monitoring service: Double-click `start_monitor_service.bat`
+3. Verify the service is running: Visit `http://localhost:5001/health` in your browser
+4. Check if port 5001 is already in use by another application
+5. Look for error messages in the monitor service window
 
 ### "Says 'Not a valid Solana address'"
 
