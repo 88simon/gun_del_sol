@@ -2,11 +2,20 @@
 
 Instantly open Solscan for any Solana address by hovering and clicking your side mouse button.
 
-## Features
+## Overview
+
+This project has two components:
+
+1. **Hotkey Script (Stable)** - AutoHotkey script for instant Solscan lookups and filtering
+2. **Monitoring Service (Beta)** - Python/Flask service for tracking addresses (future Telegram notifications)
+
+See [monitor/README.md](monitor/README.md) for monitoring service documentation.
+
+## Hotkey Features
 
 - **F14/XButton2**: Open any Solana address in Solscan with custom filters
 - **F13/XButton1**: Add exclusion filters to current Solscan page (per-tab persistence)
-- **Ctrl+F14**: Register addresses for Telegram monitoring
+- **Ctrl+F14**: Register addresses for Telegram monitoring (requires monitor service)
 - Smart text detection with multiple fallback strategies
 - Safe clipboard handling - restores your clipboard after use
 - Validates Solana base58 addresses (32-44 characters)
@@ -76,14 +85,17 @@ Analyzing whale wallet? Exclude Jupiter, Raydium, Pump.fun to see only novel cou
 ### Telegram Monitoring (Beta)
 
 **Start service:**
-1. Double-click `start_monitor_service.bat`
-2. Service runs at `http://localhost:5001`
+1. Navigate to `monitor/` folder
+2. Double-click `start_monitor_service.bat`
+3. Service runs at `http://localhost:5001`
 
 **Register addresses:**
 - Hover over address → Hold Ctrl + Click F14/XButton2
 - View registered addresses at `http://localhost:5001` (web dashboard)
 
 **Current status:** Phase 1 MVP - stores addresses locally, no actual notifications yet.
+
+See [monitor/README.md](monitor/README.md) for full monitoring documentation.
 
 ## Controls
 
@@ -115,10 +127,7 @@ Analyzing whale wallet? Exclude Jupiter, Raydium, Pump.fun to see only novel cou
 
 ### Monitor service offline
 
-1. Install Python 3.8+: `python --version` in Command Prompt
-2. Start service: Double-click `start_monitor_service.bat`
-3. Verify: Visit `http://localhost:5001/health` in browser
-4. Check if port 5001 is already in use
+See [monitor/README.md](monitor/README.md) for detailed troubleshooting.
 
 ### Invalid address error
 

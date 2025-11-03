@@ -5,10 +5,10 @@
 # ============================================================================
 
 # Private data - monitored addresses
-monitored_addresses.json
+monitor/monitored_addresses.json
 
 # Python cache and temp files
-__pycache__/
+monitor/__pycache__/
 *.pyc
 *.pyo
 *.pyd
@@ -33,7 +33,7 @@ Thumbs.db
 desktop.ini
 
 # Future sensitive config files (will remind you when needed)
-# config.json
-# .env
-# telegram_config.ini
-# api_keys.json
+# monitor/config.yaml
+# monitor/.env
+# monitor/telegram_config.ini
+# monitor/api_keys.json
