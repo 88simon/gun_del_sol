@@ -954,9 +954,10 @@ ShowWheelMenu() {
     global WheelMenuOriginX, WheelMenuOriginY, WheelMenuSize, WheelMenuLastHovered
     global WheelMenuCapturedAddress
 
+    ; If menu is already open, close it first to reopen at new location
     if (WheelMenuActive) {
         CloseWheelMenu()
-        return
+        Sleep 50  ; Small delay to ensure cleanup completes
     }
 
     ; CRITICAL: Capture address BEFORE opening menu (before mouse moves away)
@@ -1077,9 +1078,9 @@ UpdateWheelMenuHover() {
             angleDeg += 360
         }
 
-        ; Adjust for our slice layout (first slice starts at top = -90°)
-        ; Add 90 to make 0° point up instead of right
-        angleDeg := Mod(angleDeg + 90, 360)
+        ; Adjust for our slice layout (first slice centered at top)
+        ; Add 90 to make 0° point up, then add 30 to center slice 1 at north
+        angleDeg := Mod(angleDeg + 90 + 30, 360)
 
         ; Determine which slice (1-6)
         ; Each slice is 60° (with 5° gaps we'll add later)
@@ -1107,19 +1108,19 @@ RedrawWheelMenu(hoveredSlice) {
 
     centerX := WheelMenuCenterX
     centerY := WheelMenuCenterY
-    outerRadius := 25      ; Smaller ring outer edge
-    innerRadius := 18      ; Smaller ring inner edge
+    outerRadius := 15      ; Even smaller ring outer edge
+    innerRadius := 10      ; Even smaller ring inner edge
 
     ; Clear canvas
     Gdip_GraphicsClear(WheelMenuGraphics, 0x00000000)
 
-    ; Base colors for each slice (more muted)
-    baseColors := [0x804A90E2, 0x80E74C3C, 0x809B59B6, 0x802ECC71, 0x80F39C12, 0x8095A5A6]
+    ; Base colors for each slice (fully opaque)
+    baseColors := [0xFF4A90E2, 0xFFE74C3C, 0xFF9B59B6, 0xFF2ECC71, 0xFFF39C12, 0xFF95A5A6]
 
     ; Draw 6 thin ring segments with gaps
     Loop 6 {
         sliceIndex := A_Index
-        startAngle := (sliceIndex - 1) * 60 - 90
+        startAngle := (sliceIndex - 1) * 60 - 90 + 30  ; Rotate by 30° to center slice 1 at north
         sweepAngle := 55  ; 55° slice + 5° gap = 60° total
 
         ; Determine color (brighten if hovered)
@@ -1174,7 +1175,7 @@ RedrawWheelMenu(hoveredSlice) {
     }
 
     if (fontFamily) {
-        font := Gdip_CreateFont(fontFamily, 12, 1)  ; Slightly larger font
+        font := Gdip_CreateFont(fontFamily, 8, 1)  ; Slightly larger font
         fontNumber := Gdip_CreateFont(fontFamily, 10, 0)  ; Smaller number, not bold
 
         if (font && fontNumber) {
@@ -1183,7 +1184,7 @@ RedrawWheelMenu(hoveredSlice) {
                 Gdip_SetStringFormatAlign(format, 1)      ; Center horizontally
                 Gdip_SetStringFormatLineAlign(format, 1)  ; Center vertically
 
-                textDistance := 110  ; Distance from center for text boxes
+                textDistance := 55  ; Distance from center for text boxes
 
                 Loop labels.Length {
                     sliceIndex := A_Index
@@ -1194,20 +1195,21 @@ RedrawWheelMenu(hoveredSlice) {
                     textX := centerX + (textDistance * Cos(angleRad))
                     textY := centerY + (textDistance * Sin(angleRad))
 
-                    ; Determine text colors
+                    ; Determine text colors (INVERTED: dark normally, grey when hovered)
                     if (sliceIndex == hoveredSlice) {
-                        textColor := 0xFFFFFFFF      ; White when hovered
-                        bgColor := 0xC0000000        ; Dark semi-transparent background
-                        numberColor := 0xFFCCCCCC    ; Light gray number
+                        textColor := 0xFFFFFFFF      ; White text when hovered
+                        bgColor := 0xFF505050        ; Grey background when hovered (fully opaque)
                     } else {
-                        textColor := 0xFFCCCCCC      ; Light gray normally
-                        bgColor := 0x90000000        ; Very dark semi-transparent
-                        numberColor := 0xFF888888    ; Gray number
+                        textColor := 0xFFCCCCCC      ; Light gray text normally
+                        bgColor := 0xFF000000        ; Black background normally (fully opaque)
                     }
 
+                    ; Create combined label with number (like "1 Solscan")
+                    combinedLabel := sliceIndex . " " . labels[sliceIndex]
+
                     ; Draw rounded rectangle background for label
-                    boxW := 80
-                    boxH := 35
+                    boxW := 50  ; Wider to fit number + text
+                    boxH := 28   ; Slightly shorter since only one line
                     cornerRadius := 6  ; Slight rounding
 
                     pBrushBg := Gdip_BrushCreateSolid(bgColor)
@@ -1217,36 +1219,17 @@ RedrawWheelMenu(hoveredSlice) {
                         if (path) {
                             Gdip_AddPathRoundedRectangle(path, textX - boxW/2, textY - boxH/2, boxW, boxH, cornerRadius)
                             Gdip_FillPath(WheelMenuGraphics, pBrushBg, path)
-
-                            ; Add bright border when hovered
-                            if (sliceIndex == hoveredSlice) {
-                                borderColor := 0xFFFFFFFF  ; Bright white border
-                                pPen := Gdip_CreatePen(borderColor, 2)
-                                if (pPen) {
-                                    Gdip_DrawPath(WheelMenuGraphics, pPen, path)
-                                    Gdip_DeletePen(pPen)
-                                }
-                            }
-
                             Gdip_DeletePath(path)
                         }
                         Gdip_DeleteBrush(pBrushBg)
                     }
 
-                    ; Draw label text
+                    ; Draw combined label text (number + label on same line)
                     pTextBrush := Gdip_BrushCreateSolid(textColor)
                     if (pTextBrush) {
-                        Gdip_DrawString(WheelMenuGraphics, labels[sliceIndex], font, pTextBrush
-                            , textX - boxW/2, textY - boxH/2 + 3, boxW, boxH - 13, format)
+                        Gdip_DrawString(WheelMenuGraphics, combinedLabel, font, pTextBrush
+                            , textX - boxW/2, textY - boxH/2, boxW, boxH, format)
                         Gdip_DeleteBrush(pTextBrush)
-                    }
-
-                    ; Draw number below label
-                    pNumberBrush := Gdip_BrushCreateSolid(numberColor)
-                    if (pNumberBrush) {
-                        Gdip_DrawString(WheelMenuGraphics, sliceIndex, fontNumber, pNumberBrush
-                            , textX - 15, textY + 8, 30, 15, format)
-                        Gdip_DeleteBrush(pNumberBrush)
                     }
                 }
 
