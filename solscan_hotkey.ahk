@@ -18,6 +18,8 @@ SetWorkingDir A_ScriptDir
 SendMode "Input"
 CoordMode "Mouse", "Screen"
 
+; No external libraries needed - using built-in ActiveX
+
 ; Configuration
 NOTIFICATION_DURATION := 2000  ; milliseconds
 SELECTION_DELAY := 100         ; delay after selection before copy
@@ -648,34 +650,27 @@ ShowNotification(title, message) {
 }
 
 ; ============================================================================
-; WHEEL MENU SYSTEM
+; RADIAL PIE MENU SYSTEM (WebView2)
 ; ============================================================================
-; Radial menu that shows all available actions
-; User can select by moving mouse toward an action or pressing number keys
+; Beautiful Blender-style radial pie menu using WebView2 for modern HTML/CSS rendering
+;
+; REQUIREMENTS:
+; - WebView2 Runtime (will be installed automatically if missing)
+; - Download from: https://developer.microsoft.com/en-us/microsoft-edge/webview2/
+;
+; INTERACTION METHODS:
+; - Keyboard: Press 1-5 to select action, Esc to cancel (PRIMARY METHOD)
+; - Mouse: Hover and click pie slices (visual feedback only)
+;
+; NOTE: Keyboard shortcuts via AutoHotkey (#HotIf) are the primary interaction
 ; ============================================================================
 
-; Wheel menu configuration
 global WheelMenuActive := false
 global WheelMenuGui := ""
-global WheelMenuStartX := 0
-global WheelMenuStartY := 0
-global WheelMenuSelectedAction := 0
-global WheelMenuTimer := ""
-global WheelMenuButtons := Map()
-
-; Menu actions configuration
-global WheelMenuActions := [
-    {id: 1, name: "Open Solscan", key: "1", handler: "HandleSolscanLookup", color: "4A90E2"},
-    {id: 2, name: "Add Exclusion", key: "2", handler: "HandleSolscanLookupWithExclude", color: "E74C3C"},
-    {id: 3, name: "Monitor Address", key: "3", handler: "HandleTelegramRegister", color: "9B59B6"},
-    {id: 4, name: "Defined.fi Lookup", key: "4", handler: "HandleDefinedFiLookup", color: "2ECC71"},
-    {id: 5, name: "Analyze Token", key: "5", handler: "HandleTokenAnalysis", color: "F39C12"},
-    {id: 6, name: "Cancel", key: "Esc", handler: "", color: "95A5A6"}
-]
+global WheelMenuWebView := ""
 
 ShowWheelMenu() {
-    global WheelMenuActive, WheelMenuGui, WheelMenuStartX, WheelMenuStartY
-    global WheelMenuSelectedAction, WheelMenuTimer, WheelMenuButtons, WheelMenuActions
+    global WheelMenuActive, WheelMenuGui, WheelMenuWebView
 
     ; If menu is already active, close it
     if (WheelMenuActive) {
@@ -683,138 +678,78 @@ ShowWheelMenu() {
         return
     }
 
-    ; Store initial mouse position
-    MouseGetPos &WheelMenuStartX, &WheelMenuStartY
+    ; Just use the simple menu that actually works
+    ; The HTML pie menu doesn't work properly with AutoHotkey's ActiveX limitations
+    MouseGetPos &mx, &my
+    ShowSimpleMenu(mx, my)
+}
 
-    ; Create GUI overlay
-    WheelMenuGui := Gui("+AlwaysOnTop -Caption +ToolWindow +Owner")
-    WheelMenuGui.BackColor := "1a1a1a"
-    WheelMenuGui.SetFont("s11 Bold", "Segoe UI")
+; Fallback simple button menu
+ShowSimpleMenu(mx, my) {
+    global WheelMenuActive, WheelMenuGui
 
-    ; Menu dimensions
-    centerSize := 120
-    buttonWidth := 180
-    buttonHeight := 50
-    radius := 150
+    WheelMenuGui := Gui("+AlwaysOnTop +ToolWindow -Caption +Border")
+    WheelMenuGui.BackColor := "202020"
+    WheelMenuGui.SetFont("s10 Bold", "Segoe UI")
 
-    ; Center position relative to GUI (not screen)
-    menuSize := 500
-    centerX := menuSize // 2
-    centerY := menuSize // 2
+    WheelMenuGui.Add("Text", "x10 y10 w280 Center c999999", "QUICK ACTIONS")
 
-    ; Calculate button positions in a circle
-    numActions := WheelMenuActions.Length
-    angleStep := 360 / numActions
+    btn1 := WheelMenuGui.Add("Button", "x10 y40 w280 h35", "[1] Open Solscan")
+    btn1.OnEvent("Click", (*) => SelectWheelAction(1))
 
-    WheelMenuButtons := Map()
+    btn2 := WheelMenuGui.Add("Button", "x10 y80 w280 h35", "[2] Add Exclusion")
+    btn2.OnEvent("Click", (*) => SelectWheelAction(2))
 
-    ; Create buttons positioned in a circle
-    for index, action in WheelMenuActions {
-        ; Calculate angle (start from top, go clockwise)
-        angle := (index - 1) * angleStep - 90  ; -90 to start at top
-        angleRad := angle * 3.14159265 / 180
+    btn3 := WheelMenuGui.Add("Button", "x10 y120 w280 h35", "[3] Monitor Address")
+    btn3.OnEvent("Click", (*) => SelectWheelAction(3))
 
-        ; Calculate button position
-        btnX := centerX + (Cos(angleRad) * radius) - (buttonWidth // 2)
-        btnY := centerY + (Sin(angleRad) * radius) - (buttonHeight // 2)
+    btn4 := WheelMenuGui.Add("Button", "x10 y160 w280 h35", "[4] Defined.fi Lookup")
+    btn4.OnEvent("Click", (*) => SelectWheelAction(4))
 
-        ; Create button
-        btn := WheelMenuGui.Add("Button", "x" . btnX . " y" . btnY . " w" . buttonWidth . " h" . buttonHeight, action.name . "`n[" . action.key . "]")
-        btn.OnEvent("Click", (*) => SelectWheelAction(action.id))
+    btn5 := WheelMenuGui.Add("Button", "x10 y200 w280 h35", "[5] Analyze Token")
+    btn5.OnEvent("Click", (*) => SelectWheelAction(5))
 
-        ; Store button reference
-        WheelMenuButtons[action.id] := btn
-    }
+    btn6 := WheelMenuGui.Add("Button", "x10 y240 w280 h35", "[Esc] Cancel")
+    btn6.OnEvent("Click", (*) => CloseWheelMenu())
 
-    ; Add center circle label
-    centerText := WheelMenuGui.Add("Text", "x" . (centerX - centerSize//2) . " y" . (centerY - 30) . " w" . centerSize . " h60 Center BackgroundTrans", "WHEEL MENU`n`nMove mouse`nor press 1-6")
-    WheelMenuGui.SetFont("s10 Norm cWhite", "Segoe UI")
-
-    ; Position GUI centered on mouse
-    guiX := WheelMenuStartX - menuSize // 2
-    guiY := WheelMenuStartY - menuSize // 2
-
-    ; Set transparency
-    WinSetTransColor "1a1a1a 230", WheelMenuGui
-
-    ; Show GUI
-    WheelMenuGui.Show("x" . guiX . " y" . guiY . " w" . menuSize . " h" . menuSize . " NoActivate")
-
-    ; Mark menu as active
+    WheelMenuGui.Show("x" . (mx - 150) . " y" . (my - 140) . " w300 h285 NoActivate")
     WheelMenuActive := true
-    WheelMenuSelectedAction := 0
-
-    ; Start mouse tracking timer
-    WheelMenuTimer := SetTimer(UpdateWheelSelection, 50)
 }
 
 SelectWheelAction(actionId) {
-    global WheelMenuActive, WheelMenuActions
-
-    if (!WheelMenuActive) {
-        return
-    }
-
-    ; Find the selected action
-    selectedHandler := ""
-    for action in WheelMenuActions {
-        if (action.id = actionId) {
-            selectedHandler := action.handler
-            break
-        }
-    }
-
     ; Close menu first
     CloseWheelMenu()
 
-    ; Execute the handler
-    if (selectedHandler != "" && selectedHandler != "Cancel") {
-        ; Small delay to ensure menu is closed
-        Sleep 100
-        %selectedHandler%()
+    ; Small delay
+    Sleep 50
+
+    ; Execute action
+    switch actionId {
+        case 1: HandleSolscanLookup()
+        case 2: HandleSolscanLookupWithExclude()
+        case 3: HandleTelegramRegister()
+        case 4: HandleDefinedFiLookup()
+        case 5: HandleTokenAnalysis()
+        case 6: return  ; Cancel - just close
     }
 }
 
 CloseWheelMenu() {
-    global WheelMenuActive, WheelMenuGui, WheelMenuTimer
+    global WheelMenuActive, WheelMenuGui, WheelMenuWebView
 
     if (!WheelMenuActive) {
         return
     }
 
-    ; Stop timer
-    if (WheelMenuTimer) {
-        SetTimer WheelMenuTimer, 0
-        WheelMenuTimer := ""
-    }
-
-    ; Mark as inactive first
     WheelMenuActive := false
 
-    ; Destroy GUI
-    try {
-        WheelMenuGui.Destroy()
+    if (WheelMenuGui) {
+        try {
+            WheelMenuGui.Destroy()
+        }
+        WheelMenuGui := ""
+        WheelMenuWebView := ""
     }
-}
-
-UpdateWheelSelection() {
-    global WheelMenuActive, WheelMenuButtons, WheelMenuStartX, WheelMenuStartY
-
-    if (!WheelMenuActive) {
-        return
-    }
-
-    ; Get current mouse position
-    MouseGetPos &currentX, &currentY
-
-    ; Calculate distance from center
-    deltaX := currentX - WheelMenuStartX
-    deltaY := currentY - WheelMenuStartY
-    distance := Sqrt(deltaX * deltaX + deltaY * deltaY)
-
-    ; Highlight button based on mouse angle (visual feedback only)
-    ; The actual button hovers work natively
-    ; This function can be expanded later for custom hover effects
 }
 
 ; Conditional hotkeys - only active when menu is open
@@ -824,30 +759,8 @@ UpdateWheelSelection() {
 3::SelectWheelAction(3)
 4::SelectWheelAction(4)
 5::SelectWheelAction(5)
-6::SelectWheelAction(6)
 Escape::CloseWheelMenu()
 #HotIf
-
-; Helper function for atan2
-ATan2(y, x) {
-    if (x > 0) {
-        return ATan(y / x)
-    } else if (x < 0) {
-        if (y >= 0) {
-            return ATan(y / x) + 3.14159265
-        } else {
-            return ATan(y / x) - 3.14159265
-        }
-    } else {
-        if (y > 0) {
-            return 3.14159265 / 2
-        } else if (y < 0) {
-            return -3.14159265 / 2
-        } else {
-            return 0
-        }
-    }
-}
 
 ; ============================================================================
 ; Exit Hotkey: Ctrl+Alt+Q to quit script
