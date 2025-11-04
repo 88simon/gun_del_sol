@@ -18,12 +18,160 @@ SetWorkingDir A_ScriptDir
 SendMode "Input"
 CoordMode "Mouse", "Screen"
 
-; No external libraries needed - using built-in ActiveX
+; ============================================================================
+; GDI+ helper functions for wheel menu rendering
+; ============================================================================
+; IMPORTANT: These must be defined BEFORE InitGdip() is called below
+
+Gdip_Startup() {
+    static loaded := false
+    if (!loaded)
+        DllCall("LoadLibrary", "str", "gdiplus.dll", "Ptr")
+    si := Buffer(16, 0)
+    NumPut("UInt", 1, si, 0)                    ; GdiplusVersion
+    NumPut("UInt", 0, si, 4)                    ; DebugEventCallback
+    NumPut("UInt", 0, si, 8)                    ; SuppressBackgroundThread
+    NumPut("UInt", 0, si, 12)                   ; SuppressExternalCodecs
+    token := 0
+    if (DllCall("gdiplus\GdiplusStartup", "Ptr*", &token, "Ptr", si, "Ptr", 0, "UInt"))
+        return 0
+    loaded := true
+    return token
+}
+
+Gdip_Shutdown(token) {
+    if (token)
+        DllCall("gdiplus\GdiplusShutdown", "Ptr", token)
+}
+
+Gdip_GraphicsFromHDC(hdc) {
+    graphics := 0
+    if (DllCall("gdiplus\GdipCreateFromHDC", "Ptr", hdc, "Ptr*", &graphics, "UInt"))
+        return 0
+    return graphics
+}
+
+Gdip_DeleteGraphics(graphics) {
+    if (graphics)
+        DllCall("gdiplus\GdipDeleteGraphics", "Ptr", graphics)
+}
+
+Gdip_SetSmoothingMode(graphics, mode) {
+    return DllCall("gdiplus\GdipSetSmoothingMode", "Ptr", graphics, "Int", mode, "UInt")
+}
+
+Gdip_GraphicsClear(graphics, argb) {
+    return DllCall("gdiplus\GdipGraphicsClear", "Ptr", graphics, "UInt", argb, "UInt")
+}
+
+Gdip_BrushCreateSolid(argb) {
+    brush := 0
+    if (DllCall("gdiplus\GdipCreateSolidFill", "UInt", argb, "Ptr*", &brush, "UInt"))
+        return 0
+    return brush
+}
+
+Gdip_DeleteBrush(brush) {
+    if (brush)
+        DllCall("gdiplus\GdipDeleteBrush", "Ptr", brush)
+}
+
+Gdip_FillPie(graphics, brush, x, y, w, h, startAngle, sweepAngle) {
+    return DllCall("gdiplus\GdipFillPie", "Ptr", graphics, "Ptr", brush
+        , "Float", x, "Float", y, "Float", w, "Float", h
+        , "Float", startAngle, "Float", sweepAngle, "UInt")
+}
+
+Gdip_FillEllipse(graphics, brush, x, y, w, h) {
+    return DllCall("gdiplus\GdipFillEllipse", "Ptr", graphics, "Ptr", brush
+        , "Float", x, "Float", y, "Float", w, "Float", h, "UInt")
+}
+
+CreateDIBSection(width, height) {
+    hdc := DllCall("user32\GetDC", "Ptr", 0, "Ptr")
+    bi := Buffer(40, 0)
+    NumPut("UInt", 40, bi, 0)                   ; biSize
+    NumPut("Int", width, bi, 4)                 ; biWidth
+    NumPut("Int", -height, bi, 8)               ; biHeight (top-down)
+    NumPut("UShort", 1, bi, 12)                 ; biPlanes
+    NumPut("UShort", 32, bi, 14)                ; biBitCount
+    NumPut("UInt", 0, bi, 16)                   ; biCompression (BI_RGB)
+    pvBits := 0
+    hbm := DllCall("gdi32\CreateDIBSection", "Ptr", hdc, "Ptr", bi, "UInt", 0
+        , "Ptr*", &pvBits, "Ptr", 0, "UInt", 0, "Ptr")
+    DllCall("user32\ReleaseDC", "Ptr", 0, "Ptr", hdc)
+    return hbm
+}
+
+CreateCompatibleDC() {
+    return DllCall("gdi32\CreateCompatibleDC", "Ptr", 0, "Ptr")
+}
+
+SelectObject(hdc, object) {
+    return DllCall("gdi32\SelectObject", "Ptr", hdc, "Ptr", object, "Ptr")
+}
+
+DeleteDC(hdc) {
+    if (hdc)
+        DllCall("gdi32\DeleteDC", "Ptr", hdc)
+}
+
+DeleteObject(hObj) {
+    if (hObj)
+        DllCall("gdi32\DeleteObject", "Ptr", hObj)
+}
+
+UpdateLayeredWindow(hwnd, hdc, x, y, width, height) {
+    size := Buffer(8, 0)
+    NumPut("Int", width, size, 0)
+    NumPut("Int", height, size, 4)
+
+    ptSrc := Buffer(8, 0)
+    ptDest := Buffer(8, 0)
+    NumPut("Int", x, ptDest, 0)
+    NumPut("Int", y, ptDest, 4)
+
+    blend := Buffer(4, 0)
+    NumPut("UChar", 0, blend, 0)                ; AC_SRC_OVER
+    NumPut("UChar", 0, blend, 1)                ; BlendFlags
+    NumPut("UChar", 255, blend, 2)              ; SourceConstantAlpha
+    NumPut("UChar", 1, blend, 3)                ; AC_SRC_ALPHA
+
+    return DllCall("user32\UpdateLayeredWindow", "Ptr", hwnd, "Ptr", 0
+        , "Ptr", ptDest, "Ptr", size, "Ptr", hdc, "Ptr", ptSrc
+        , "UInt", 0, "Ptr", blend, "UInt", 0x02)
+}
 
 ; Configuration
 NOTIFICATION_DURATION := 2000  ; milliseconds
 SELECTION_DELAY := 100         ; delay after selection before copy
 LOCAL_SERVER_URL := "http://localhost:5001/register"  ; Telegram monitor service
+
+; GDI+ initialization
+global g_GdipToken := 0
+
+InitGdip() {
+    global g_GdipToken
+    if !g_GdipToken {
+        g_GdipToken := Gdip_Startup()
+        if (!g_GdipToken) {
+            MsgBox "GDI+ failed to initialize! Token: " . g_GdipToken
+            ExitApp
+        }
+        OnExit(ShutdownGdip)
+    }
+}
+
+ShutdownGdip(*) {
+    global g_GdipToken
+    if g_GdipToken {
+        Gdip_Shutdown(g_GdipToken)
+        g_GdipToken := 0
+    }
+}
+
+; Initialize GDI+ on startup
+InitGdip()
 
 ; Legacy global variables (kept for F14 backward compatibility)
 global currentMainAddress := ""
@@ -650,68 +798,92 @@ ShowNotification(title, message) {
 }
 
 ; ============================================================================
-; RADIAL PIE MENU SYSTEM (WebView2)
+; RADIAL PIE MENU SYSTEM (GDI+)
 ; ============================================================================
-; Beautiful Blender-style radial pie menu using WebView2 for modern HTML/CSS rendering
-;
-; REQUIREMENTS:
-; - WebView2 Runtime (will be installed automatically if missing)
-; - Download from: https://developer.microsoft.com/en-us/microsoft-edge/webview2/
+; Beautiful Blender-style radial pie menu using GDI+ for native rendering
 ;
 ; INTERACTION METHODS:
-; - Keyboard: Press 1-5 to select action, Esc to cancel (PRIMARY METHOD)
-; - Mouse: Hover and click pie slices (visual feedback only)
+; - Keyboard: Press 1-5 to select action, Esc/6 to cancel (PRIMARY METHOD)
+; - Mouse: Click pie slices directly
 ;
 ; NOTE: Keyboard shortcuts via AutoHotkey (#HotIf) are the primary interaction
 ; ============================================================================
 
 global WheelMenuActive := false
 global WheelMenuGui := ""
-global WheelMenuWebView := ""
 
 ShowWheelMenu() {
     global WheelMenuActive, WheelMenuGui
 
-    ; If menu is already active, close it
     if (WheelMenuActive) {
         CloseWheelMenu()
         return
     }
 
-    ; Get mouse position and show menu
     MouseGetPos &mx, &my
-    ShowSimpleMenu(mx, my)
-}
 
-; Fallback simple button menu
-ShowSimpleMenu(mx, my) {
-    global WheelMenuActive, WheelMenuGui
+    size := 300
+    centerX := size // 2
+    centerY := size // 2
+    radius := 130
+    innerRadius := 50
 
-    WheelMenuGui := Gui("+AlwaysOnTop +ToolWindow -Caption +Border")
-    WheelMenuGui.BackColor := "202020"
-    WheelMenuGui.SetFont("s10 Bold", "Segoe UI")
+    WheelMenuGui := Gui("-Caption +E0x80000 +E0x20 +AlwaysOnTop +ToolWindow")
+    WheelMenuGui.Show("x" . (mx - centerX) . " y" . (my - centerY) . " w" . size . " h" . size . " NoActivate")
+    hwnd := WheelMenuGui.Hwnd
 
-    WheelMenuGui.Add("Text", "x10 y10 w280 Center c999999", "QUICK ACTIONS")
+    hbm := CreateDIBSection(size, size)
+    if (!hbm) {
+        WheelMenuGui.Destroy()
+        WheelMenuGui := ""
+        return
+    }
 
-    btn1 := WheelMenuGui.Add("Button", "x10 y40 w280 h35", "[1] Open Solscan")
-    btn1.OnEvent("Click", (*) => SelectWheelAction(1))
+    hdc := CreateCompatibleDC()
+    if (!hdc) {
+        DeleteObject(hbm)
+        WheelMenuGui.Destroy()
+        WheelMenuGui := ""
+        return
+    }
 
-    btn2 := WheelMenuGui.Add("Button", "x10 y80 w280 h35", "[2] Add Exclusion")
-    btn2.OnEvent("Click", (*) => SelectWheelAction(2))
+    hOldBitmap := SelectObject(hdc, hbm)
+    pGraphics := Gdip_GraphicsFromHDC(hdc)
+    if (!pGraphics) {
+        SelectObject(hdc, hOldBitmap)
+        DeleteDC(hdc)
+        DeleteObject(hbm)
+        WheelMenuGui.Destroy()
+        WheelMenuGui := ""
+        return
+    }
 
-    btn3 := WheelMenuGui.Add("Button", "x10 y120 w280 h35", "[3] Monitor Address")
-    btn3.OnEvent("Click", (*) => SelectWheelAction(3))
+    Gdip_SetSmoothingMode(pGraphics, 4)
+    Gdip_GraphicsClear(pGraphics, 0x00000000)
 
-    btn4 := WheelMenuGui.Add("Button", "x10 y160 w280 h35", "[4] Defined.fi Lookup")
-    btn4.OnEvent("Click", (*) => SelectWheelAction(4))
+    colors := [0xAA4A90E2, 0xAAE74C3C, 0xAA9B59B6, 0xAA2ECC71, 0xAAF39C12, 0xAA95A5A6]
+    Loop colors.Length {
+        startAngle := (A_Index - 1) * 60 - 90
+        pBrush := Gdip_BrushCreateSolid(colors[A_Index])
+        if (pBrush) {
+            Gdip_FillPie(pGraphics, pBrush, centerX - radius, centerY - radius, radius * 2, radius * 2, startAngle, 60)
+            Gdip_DeleteBrush(pBrush)
+        }
+    }
 
-    btn5 := WheelMenuGui.Add("Button", "x10 y200 w280 h35", "[5] Analyze Token")
-    btn5.OnEvent("Click", (*) => SelectWheelAction(5))
+    pBrushCenter := Gdip_BrushCreateSolid(0xFF1E1E1E)
+    if (pBrushCenter) {
+        Gdip_FillEllipse(pGraphics, pBrushCenter, centerX - innerRadius, centerY - innerRadius, innerRadius * 2, innerRadius * 2)
+        Gdip_DeleteBrush(pBrushCenter)
+    }
 
-    btn6 := WheelMenuGui.Add("Button", "x10 y240 w280 h35", "[Esc] Cancel")
-    btn6.OnEvent("Click", (*) => CloseWheelMenu())
+    UpdateLayeredWindow(hwnd, hdc, mx - centerX, my - centerY, size, size)
 
-    WheelMenuGui.Show("x" . (mx - 150) . " y" . (my - 140) . " w300 h285 NoActivate")
+    Gdip_DeleteGraphics(pGraphics)
+    SelectObject(hdc, hOldBitmap)
+    DeleteDC(hdc)
+    DeleteObject(hbm)
+
     WheelMenuActive := true
 }
 
@@ -734,20 +906,21 @@ SelectWheelAction(actionId) {
 }
 
 CloseWheelMenu() {
-    global WheelMenuActive, WheelMenuGui, WheelMenuWebView
+    global WheelMenuActive, WheelMenuGui
 
     if (!WheelMenuActive) {
+        if (WheelMenuGui) {
+            try WheelMenuGui.Destroy()
+            WheelMenuGui := ""
+        }
         return
     }
 
     WheelMenuActive := false
 
     if (WheelMenuGui) {
-        try {
-            WheelMenuGui.Destroy()
-        }
+        try WheelMenuGui.Destroy()
         WheelMenuGui := ""
-        WheelMenuWebView := ""
     }
 }
 
