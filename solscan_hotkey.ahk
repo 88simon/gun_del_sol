@@ -1083,32 +1083,17 @@ RedrawWheelMenu(hoveredSlice) {
     ; Clear canvas
     Gdip_GraphicsClear(WheelMenuGraphics, 0x00000000)
 
-    ; Base colors for each slice (fully opaque)
-    baseColors := [0xFF4A90E2, 0xFFE74C3C, 0xFF9B59B6, 0xFF2ECC71, 0xFFF39C12, 0xFF95A5A6]
-
     ; Draw 6 thin ring segments with gaps
     Loop 6 {
         sliceIndex := A_Index
         startAngle := (sliceIndex - 1) * 60 - 90  ; slice 1 at north
         sweepAngle := 55  ; 55° slice + 5° gap = 60° total
 
-        ; Determine color (brighten if hovered)
-        color := baseColors[sliceIndex]
+        ; Determine color: grey normally, muted light blue when hovered
         if (sliceIndex == hoveredSlice) {
-            ; Full opacity when hovered
-            if (sliceIndex == 1) {
-                color := 0xFF5AA5FF
-            } else if (sliceIndex == 2) {
-                color := 0xFFFF6B5B
-            } else if (sliceIndex == 3) {
-                color := 0xFFB76FC8
-            } else if (sliceIndex == 4) {
-                color := 0xFF4AE88A
-            } else if (sliceIndex == 5) {
-                color := 0xFFFFC133
-            } else if (sliceIndex == 6) {
-                color := 0xFFB0BFC5
-            }
+            color := 0xFF6B9BD1  ; Muted light blue when highlighted
+        } else {
+            color := 0xFF505050  ; Grey for all non-highlighted slices
         }
 
         ; Draw outer ring segment
