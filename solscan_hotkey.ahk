@@ -397,10 +397,15 @@ RecordHotkey(guiObj, editControl, *) {
             }
             Loop 26 {
                 letter := Chr(96 + A_Index)
-                try Hotkey "*~" . letter, "Off"
+                try Hotkey "~" . letter, "Off"
+                try Hotkey "~^" . letter, "Off"
+                try Hotkey "~!" . letter, "Off"
+                try Hotkey "~+" . letter, "Off"
             }
             Loop 24 {
-                try Hotkey "*~F" . A_Index, "Off"
+                fkey := "F" . A_Index
+                try Hotkey "~" . fkey, "Off"
+                try Hotkey "~^" . fkey, "Off"
             }
             if (currentRecordGui)
                 currentRecordGui.Destroy()
@@ -451,61 +456,62 @@ RecordHotkey(guiObj, editControl, *) {
         }
     }
 
-    ; Use a wildcard hotkey to capture any key combination
+    ; Register hotkeys for all common keys with all modifier combinations
+    ; Letters a-z
     try {
-        Hotkey "*~a", CaptureAnyKey, "On"
-        Hotkey "*~b", CaptureAnyKey, "On"
-        Hotkey "*~c", CaptureAnyKey, "On"
-        Hotkey "*~d", CaptureAnyKey, "On"
-        Hotkey "*~e", CaptureAnyKey, "On"
-        Hotkey "*~f", CaptureAnyKey, "On"
-        Hotkey "*~g", CaptureAnyKey, "On"
-        Hotkey "*~h", CaptureAnyKey, "On"
-        Hotkey "*~i", CaptureAnyKey, "On"
-        Hotkey "*~j", CaptureAnyKey, "On"
-        Hotkey "*~k", CaptureAnyKey, "On"
-        Hotkey "*~l", CaptureAnyKey, "On"
-        Hotkey "*~m", CaptureAnyKey, "On"
-        Hotkey "*~n", CaptureAnyKey, "On"
-        Hotkey "*~o", CaptureAnyKey, "On"
-        Hotkey "*~p", CaptureAnyKey, "On"
-        Hotkey "*~q", CaptureAnyKey, "On"
-        Hotkey "*~r", CaptureAnyKey, "On"
-        Hotkey "*~s", CaptureAnyKey, "On"
-        Hotkey "*~t", CaptureAnyKey, "On"
-        Hotkey "*~u", CaptureAnyKey, "On"
-        Hotkey "*~v", CaptureAnyKey, "On"
-        Hotkey "*~w", CaptureAnyKey, "On"
-        Hotkey "*~x", CaptureAnyKey, "On"
-        Hotkey "*~y", CaptureAnyKey, "On"
-        Hotkey "*~z", CaptureAnyKey, "On"
+        Loop 26 {
+            letter := Chr(96 + A_Index)  ; a-z
+            Hotkey "~" . letter, CaptureAnyKey, "On"
+            Hotkey "~^" . letter, CaptureAnyKey, "On"      ; Ctrl
+            Hotkey "~!" . letter, CaptureAnyKey, "On"      ; Alt
+            Hotkey "~+" . letter, CaptureAnyKey, "On"      ; Shift
+            Hotkey "~#" . letter, CaptureAnyKey, "On"      ; Win
+            Hotkey "~^!" . letter, CaptureAnyKey, "On"     ; Ctrl+Alt
+            Hotkey "~^+" . letter, CaptureAnyKey, "On"     ; Ctrl+Shift
+            Hotkey "~!+" . letter, CaptureAnyKey, "On"     ; Alt+Shift
+            Hotkey "~^!+" . letter, CaptureAnyKey, "On"    ; Ctrl+Alt+Shift
+        }
+    }
 
-        ; Function keys
+    ; Function keys F1-F24
+    try {
         Loop 24 {
-            Hotkey "*~F" . A_Index, CaptureAnyKey, "On"
+            fkey := "F" . A_Index
+            Hotkey "~" . fkey, CaptureAnyKey, "On"
+            Hotkey "~^" . fkey, CaptureAnyKey, "On"
+            Hotkey "~!" . fkey, CaptureAnyKey, "On"
+            Hotkey "~+" . fkey, CaptureAnyKey, "On"
+            Hotkey "~#" . fkey, CaptureAnyKey, "On"
+            Hotkey "~^!" . fkey, CaptureAnyKey, "On"
+            Hotkey "~^+" . fkey, CaptureAnyKey, "On"
+            Hotkey "~!+" . fkey, CaptureAnyKey, "On"
+            Hotkey "~^!+" . fkey, CaptureAnyKey, "On"
         }
+    }
 
-        ; Number keys
+    ; Number keys 0-9
+    try {
         Loop 10 {
-            Hotkey "*~" . (A_Index - 1), CaptureAnyKey, "On"
+            num := A_Index - 1
+            Hotkey "~" . num, CaptureAnyKey, "On"
+            Hotkey "~^" . num, CaptureAnyKey, "On"
+            Hotkey "~!" . num, CaptureAnyKey, "On"
+            Hotkey "~+" . num, CaptureAnyKey, "On"
+            Hotkey "~#" . num, CaptureAnyKey, "On"
         }
+    }
 
-        ; Special keys
-        Hotkey "*~Space", CaptureAnyKey, "On"
-        Hotkey "*~Tab", CaptureAnyKey, "On"
-        Hotkey "*~Enter", CaptureAnyKey, "On"
-        Hotkey "*~BackSpace", CaptureAnyKey, "On"
-        Hotkey "*~Delete", CaptureAnyKey, "On"
-        Hotkey "*~Insert", CaptureAnyKey, "On"
-        Hotkey "*~Home", CaptureAnyKey, "On"
-        Hotkey "*~End", CaptureAnyKey, "On"
-        Hotkey "*~PgUp", CaptureAnyKey, "On"
-        Hotkey "*~PgDn", CaptureAnyKey, "On"
-        Hotkey "*~Up", CaptureAnyKey, "On"
-        Hotkey "*~Down", CaptureAnyKey, "On"
-        Hotkey "*~Left", CaptureAnyKey, "On"
-        Hotkey "*~Right", CaptureAnyKey, "On"
-        Hotkey "*~``", CaptureAnyKey, "On"
+    ; Special keys
+    try {
+        specialKeys := ["Space", "Tab", "Enter", "BackSpace", "Delete", "Insert",
+                        "Home", "End", "PgUp", "PgDn", "Up", "Down", "Left", "Right", "``"]
+        for key in specialKeys {
+            Hotkey "~" . key, CaptureAnyKey, "On"
+            Hotkey "~^" . key, CaptureAnyKey, "On"
+            Hotkey "~!" . key, CaptureAnyKey, "On"
+            Hotkey "~+" . key, CaptureAnyKey, "On"
+            Hotkey "~#" . key, CaptureAnyKey, "On"
+        }
     }
 
     ; Capture function
@@ -551,45 +557,61 @@ RecordHotkey(guiObj, editControl, *) {
             }
         }
 
-        ; Disable all letter hotkeys
+        ; Disable all letter hotkeys with all combinations
         try {
             Loop 26 {
-                letter := Chr(96 + A_Index)  ; a-z
-                try Hotkey "*~" . letter, "Off"
+                letter := Chr(96 + A_Index)
+                try Hotkey "~" . letter, "Off"
+                try Hotkey "~^" . letter, "Off"
+                try Hotkey "~!" . letter, "Off"
+                try Hotkey "~+" . letter, "Off"
+                try Hotkey "~#" . letter, "Off"
+                try Hotkey "~^!" . letter, "Off"
+                try Hotkey "~^+" . letter, "Off"
+                try Hotkey "~!+" . letter, "Off"
+                try Hotkey "~^!+" . letter, "Off"
             }
         }
 
         ; Disable function keys
         try {
             Loop 24 {
-                try Hotkey "*~F" . A_Index, "Off"
+                fkey := "F" . A_Index
+                try Hotkey "~" . fkey, "Off"
+                try Hotkey "~^" . fkey, "Off"
+                try Hotkey "~!" . fkey, "Off"
+                try Hotkey "~+" . fkey, "Off"
+                try Hotkey "~#" . fkey, "Off"
+                try Hotkey "~^!" . fkey, "Off"
+                try Hotkey "~^+" . fkey, "Off"
+                try Hotkey "~!+" . fkey, "Off"
+                try Hotkey "~^!+" . fkey, "Off"
             }
         }
 
         ; Disable number keys
         try {
             Loop 10 {
-                try Hotkey "*~" . (A_Index - 1), "Off"
+                num := A_Index - 1
+                try Hotkey "~" . num, "Off"
+                try Hotkey "~^" . num, "Off"
+                try Hotkey "~!" . num, "Off"
+                try Hotkey "~+" . num, "Off"
+                try Hotkey "~#" . num, "Off"
             }
         }
 
         ; Disable special keys
         try {
-            Hotkey "*~Space", "Off"
-            Hotkey "*~Tab", "Off"
-            Hotkey "*~Enter", "Off"
-            Hotkey "*~BackSpace", "Off"
-            Hotkey "*~Delete", "Off"
-            Hotkey "*~Insert", "Off"
-            Hotkey "*~Home", "Off"
-            Hotkey "*~End", "Off"
-            Hotkey "*~PgUp", "Off"
-            Hotkey "*~PgDn", "Off"
-            Hotkey "*~Up", "Off"
-            Hotkey "*~Down", "Off"
-            Hotkey "*~Left", "Off"
-            Hotkey "*~Right", "Off"
-            Hotkey "*~``", "Off"
+            specialKeys := ["Space", "Tab", "Enter", "BackSpace", "Delete", "Insert",
+                            "Home", "End", "PgUp", "PgDn", "Up", "Down", "Left", "Right", "``"]
+            for key in specialKeys {
+                try Hotkey "~" . key, "Off"
+                try Hotkey "~^" . key, "Off"
+                try Hotkey "~!" . key, "Off"
+                try Hotkey "~+" . key, "Off"
+                try Hotkey "~#" . key, "Off"
+            }
         }
 
         ; Re-enable the wheel menu hotkey
