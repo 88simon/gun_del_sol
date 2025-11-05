@@ -380,17 +380,38 @@ RecordHotkey(guiObj, editControl, *) {
     static currentStatusText := ""
     static currentGuiObj := ""
     static currentEditControl := ""
-    static mouseButtons := ["XButton1", "XButton2", "MButton", "LButton", "RButton"]
+    static mouseButtons := ["XButton1", "XButton2", "MButton"]
+    static escapePressed := false
 
-    ; Prevent multiple recording sessions
+    ; Force cleanup if stuck in active state
     if (hookActive) {
-        return
+        ; Try to force cleanup
+        try {
+            if (currentIh)
+                currentIh.Stop()
+            for btn in mouseButtons {
+                try Hotkey btn, "Off"
+            }
+            try Hotkey "Escape", "Off"
+            if (currentRecordGui)
+                currentRecordGui.Destroy()
+        }
+        hookActive := false
+        ; Now allow the new session to start
     }
 
     ; Store references for callbacks
     currentGuiObj := guiObj
     currentEditControl := editControl
     hookActive := true
+    escapePressed := false
+
+    ; Disable the wheel menu hotkey while recording to prevent interference
+    global WheelMenuHotkey
+    try {
+        Hotkey WheelMenuHotkey, "Off"
+        Hotkey WheelMenuHotkey . " Up", "Off"
+    }
 
     ; Create a modal dialog for recording the hotkey
     recordGui := Gui("+AlwaysOnTop +ToolWindow", "Record Hotkey")
@@ -425,8 +446,25 @@ RecordHotkey(guiObj, editControl, *) {
 
     ; Nested function for InputHook end
     InputHookEnded(inputHook) {
-        if (!hookActive)
+        if (!hookActive || escapePressed)
             return
+
+        ; Get the key
+        keyName := inputHook.EndKey
+
+        ; Special handling for function keys and other keys
+        if (keyName == "")
+            keyName := inputHook.Input
+
+        ; Ignore escape key
+        if (keyName == "Escape" || keyName == "Esc") {
+            return
+        }
+
+        ; Ignore empty input
+        if (keyName == "") {
+            return
+        }
 
         ; Get modifiers
         modifiers := ""
@@ -439,18 +477,19 @@ RecordHotkey(guiObj, editControl, *) {
         if GetKeyState("LWin") || GetKeyState("RWin")
             modifiers .= "#"
 
-        ; Get the key
-        keyName := inputHook.EndKey
-
-        ; Special handling for function keys and other keys
-        if (keyName == "")
-            keyName := inputHook.Input
-
-        if (keyName != "" && keyName != "Escape") {
-            capturedKey := modifiers . keyName
-            currentStatusText.Text := "Captured: " . capturedKey
-            CleanupAndFinish(capturedKey)
+        ; Special handling for backtick/tilde key - convert to proper AHK syntax
+        if (keyName == "``" || keyName == "~") {
+            keyName := "``"  ; Double backtick for AHK hotkey syntax
+        } else if (StrLen(keyName) == 1) {
+            ; For other single characters, try to get the key name
+            actualKeyName := GetKeyName(keyName)
+            if (actualKeyName != "")
+                keyName := actualKeyName
         }
+
+        capturedKey := modifiers . keyName
+        currentStatusText.Text := "Captured: " . capturedKey
+        CleanupAndFinish(capturedKey)
     }
 
     ; Mouse button capture
@@ -485,31 +524,51 @@ RecordHotkey(guiObj, editControl, *) {
         if (!hookActive)
             return
 
+        escapePressed := true
         CleanupAndFinish("")
     }
 
     ; Cleanup and finish
     CleanupAndFinish(capturedKey) {
+        ; Ensure hookActive is always set to false
         hookActive := false
 
-        ; Stop input hook
-        if (currentIh)
-            currentIh.Stop()
+        ; Wrap everything in try-catch to ensure cleanup always completes
+        try {
+            ; Stop input hook
+            if (currentIh)
+                currentIh.Stop()
+        }
 
         ; Disable all hotkeys
-        for btn in mouseButtons {
-            try Hotkey btn, "Off"
+        try {
+            for btn in mouseButtons {
+                try Hotkey btn, "Off"
+            }
         }
-        try Hotkey "Escape", "Off"
+
+        try {
+            Hotkey "Escape", "Off"
+        }
+
+        ; Re-enable the wheel menu hotkey
+        try {
+            Hotkey WheelMenuHotkey, "On"
+            Hotkey WheelMenuHotkey . " Up", "On"
+        }
 
         ; Update the edit control if we captured a key
-        if (capturedKey != "") {
-            currentEditControl.Value := capturedKey
+        try {
+            if (capturedKey != "" && currentEditControl) {
+                currentEditControl.Value := capturedKey
+            }
         }
 
         ; Close recording dialog
-        if (currentRecordGui)
-            currentRecordGui.Destroy()
+        try {
+            if (currentRecordGui)
+                currentRecordGui.Destroy()
+        }
 
         ; Clear static references
         currentIh := ""
@@ -517,6 +576,7 @@ RecordHotkey(guiObj, editControl, *) {
         currentStatusText := ""
         currentGuiObj := ""
         currentEditControl := ""
+        escapePressed := false
     }
 }
 
