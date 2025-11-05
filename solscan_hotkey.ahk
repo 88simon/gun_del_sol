@@ -35,14 +35,13 @@ Gdip_Startup() {
     ; Load GDI+ library
     if (!loaded) {
         DllCall("LoadLibrary", "str", "gdiplus.dll", "Ptr")
+        loaded := true
     }
 
     ; Initialize GDI+
-    si := Buffer(16, 0)
+    si := Buffer(24, 0)  ; Increased size for 64-bit compatibility
     NumPut("UInt", 1, si, 0)                    ; GdiplusVersion
-    NumPut("UInt", 0, si, 4)                    ; DebugEventCallback
-    NumPut("UInt", 0, si, 8)                    ; SuppressBackgroundThread
-    NumPut("UInt", 0, si, 12)                   ; SuppressExternalCodecs
+
     token := 0
     status := DllCall("gdiplus\GdiplusStartup", "Ptr*", &token, "Ptr", si, "Ptr", 0, "UInt")
 
@@ -51,7 +50,6 @@ Gdip_Startup() {
         return 0
     }
 
-    loaded := true
     loadedToken := token
     return token
 }
@@ -298,13 +296,17 @@ global excludedAddressesList := []
 
 ; Wheel menu captured address (stores address at menu open time)
 global WheelMenuCapturedAddress := ""
+global F14KeyPressed := false  ; Track F14 key state to prevent repeat triggers
 
 ; ============================================================================
 ; MAIN HOTKEY: F14 (mapped from your mouse button in G HUB)
 ; ============================================================================
-; Opens radial wheel menu with all available actions
-; Hover over an address, press F14 to open the menu
-; Select action by: moving mouse toward it, or pressing number key (1-6)
+; Opens radial wheel menu with Blender-style press-and-hold interaction
+;
+; INTERACTION:
+; - Press and HOLD F14 → Menu opens, move mouse to desired action
+; - Release F14 → Activates the action your mouse is pointing toward
+; - OR press number key (1-6) while holding to select action directly
 ;
 ; Available actions:
 ; 1. Solscan   - Open address in Solscan with filters
@@ -315,7 +317,36 @@ global WheelMenuCapturedAddress := ""
 ; 6. Cancel    - Close menu without action
 ; ============================================================================
 
-F14::ShowWheelMenu()
+F14:: {
+    global F14KeyPressed
+    ; Only open menu on first press, ignore repeat triggers while held
+    if (!F14KeyPressed) {
+        F14KeyPressed := true
+        ShowWheelMenu()
+    }
+}
+
+F14 Up::HandleWheelMenuRelease()
+
+HandleWheelMenuRelease() {
+    global WheelMenuActive, WheelMenuLastHovered, F14KeyPressed
+
+    ; Reset key state
+    F14KeyPressed := false
+
+    ; Only handle release if menu is active
+    if (!WheelMenuActive) {
+        return
+    }
+
+    ; Execute action for currently hovered slice
+    if (WheelMenuLastHovered > 0) {
+        SelectWheelAction(WheelMenuLastHovered)
+    } else {
+        ; Mouse is in center dead zone - just close menu (cancel)
+        CloseWheelMenu()
+    }
+}
 
 ; ============================================================================
 ; Core Function: Capture text and open Solscan
@@ -1027,8 +1058,9 @@ UpdateWheelMenuHover() {
     ; Determine hovered slice
     hoveredSlice := 0
 
-    ; Only detect hover if mouse is in the ring area (between inner and outer radius)
-    if (dist >= 50 && dist <= 130) {
+    ; Blender-style behavior: Highlight based on angle if mouse is outside center dead zone
+    ; This creates "cones of influence" that extend infinitely outward
+    if (dist >= 20) {  ; Only need minimum distance from center (dead zone)
         ; Calculate angle (in degrees, 0 = right, 90 = down, 180 = left, 270 = up)
         ; Use ATan for y/x ratio, then adjust based on quadrant
         if (relX == 0) {
@@ -1052,7 +1084,7 @@ UpdateWheelMenuHover() {
         ; Adjust for our slice layout (first slice centered at top)
         angleDeg := Mod(angleDeg + 90, 360)
 
-        ; Determine which slice (1-6)
+        ; Determine which slice (1-6) based purely on angle
         hoveredSlice := Floor(angleDeg / 60) + 1
         if (hoveredSlice > 6) {
             hoveredSlice := 1
