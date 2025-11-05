@@ -58,11 +58,13 @@ HELIUS_API_KEY = load_api_key()
 monitored_addresses = {}
 analysis_jobs = {}  # job_id -> {status, result, error}
 
-# Import Helius API
+# Import Helius API and database
 try:
-    from helius_api import TokenAnalyzer
+    from helius_api import TokenAnalyzer, generate_axiom_export, generate_token_acronym
+    import database as db
     helius_enabled = True
     print("✓ Helius API module loaded")
+    print("✓ Database module loaded")
 except ImportError as e:
     helius_enabled = False
     print(f"⚠ Helius API not available: {e}")
@@ -326,10 +328,49 @@ def run_token_analysis(job_id, token_address, min_usd, time_window_hours):
             time_window_hours=time_window_hours
         )
 
+        # Extract token info
+        token_info = result.get('token_info', {})
+        token_name = token_info.get('onChainMetadata', {}).get('metadata', {}).get('name', 'Unknown')
+        token_symbol = token_info.get('onChainMetadata', {}).get('metadata', {}).get('symbol')
+
+        # Generate acronym
+        acronym = generate_token_acronym(token_name, token_symbol)
+
+        # Generate Axiom export JSON
+        axiom_export = generate_axiom_export(
+            early_bidders=result.get('early_bidders', []),
+            token_name=token_name,
+            token_symbol=token_symbol,
+            limit=10
+        )
+
+        # Save Axiom export to file
+        axiom_dir = 'axiom_exports'
+        os.makedirs(axiom_dir, exist_ok=True)
+        axiom_filename = f"{acronym}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json"
+        axiom_filepath = os.path.join(axiom_dir, axiom_filename)
+        with open(axiom_filepath, 'w') as f:
+            json.dump(axiom_export, f, indent=2)
+
         # Convert datetime objects to strings for JSON serialization
         for bidder in result.get('early_bidders', []):
             if 'first_buy_time' in bidder and hasattr(bidder['first_buy_time'], 'isoformat'):
                 bidder['first_buy_time'] = bidder['first_buy_time'].isoformat()
+
+        # Save to database
+        try:
+            token_id = db.save_analyzed_token(
+                token_address=token_address,
+                token_name=token_name,
+                token_symbol=token_symbol,
+                acronym=acronym,
+                early_bidders=result.get('early_bidders', []),
+                axiom_json=axiom_export,
+                first_buy_timestamp=result.get('first_transaction_time')
+            )
+            print(f"[Job {job_id}] Saved to database (ID: {token_id})")
+        except Exception as db_error:
+            print(f"[Job {job_id}] Database save failed: {db_error}")
 
         # Save result to file
         os.makedirs(ANALYSIS_RESULTS_DIR, exist_ok=True)
@@ -337,11 +378,21 @@ def run_token_analysis(job_id, token_address, min_usd, time_window_hours):
         with open(result_file, 'w') as f:
             json.dump(result, f, indent=2)
 
+        # Add Axiom export info to result
+        result['axiom_export'] = {
+            'wallets': axiom_export,
+            'file': axiom_filepath,
+            'filename': axiom_filename
+        }
+        result['acronym'] = acronym
+
         analysis_jobs[job_id]['status'] = 'completed'
         analysis_jobs[job_id]['result'] = result
         analysis_jobs[job_id]['completed_at'] = datetime.now().isoformat()
+        analysis_jobs[job_id]['axiom_file'] = axiom_filepath
 
         print(f"[Job {job_id}] Analysis complete - found {result['total_unique_buyers']} early bidders")
+        print(f"[Job {job_id}] Axiom export saved: {axiom_filepath}")
 
     except Exception as e:
         print(f"[Job {job_id}] Analysis failed: {str(e)}")
@@ -485,6 +536,33 @@ def view_analysis_results(job_id):
 
     job = analysis_jobs[job_id]
     return render_template('analysis_results.html', job=job)
+
+
+@app.route('/analysis/<job_id>/axiom', methods=['GET'])
+def download_axiom_export(job_id):
+    """Download Axiom wallet tracker JSON"""
+    if job_id not in analysis_jobs:
+        return jsonify({"error": "Job not found"}), 404
+
+    job = analysis_jobs[job_id]
+
+    if job['status'] != 'completed' or not job.get('axiom_file'):
+        return jsonify({"error": "Analysis not completed or Axiom export not available"}), 400
+
+    try:
+        axiom_filepath = job['axiom_file']
+        if os.path.exists(axiom_filepath):
+            return send_file(
+                axiom_filepath,
+                mimetype='application/json',
+                as_attachment=True,
+                download_name=os.path.basename(axiom_filepath)
+            )
+        else:
+            return jsonify({"error": "Axiom export file not found"}), 404
+
+    except Exception as e:
+        return jsonify({"error": f"Download failed: {str(e)}"}), 500
 
 
 @app.route('/analysis', methods=['GET'])

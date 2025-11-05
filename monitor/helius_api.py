@@ -7,6 +7,7 @@ import requests
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 import base58
+import re
 
 class HeliusAPI:
     """Wrapper for Helius RPC and Enhanced API endpoints"""
@@ -265,6 +266,96 @@ class HeliusAPI:
             pass
 
         return (None, None)
+
+
+def generate_token_acronym(token_name: str, token_symbol: str = None) -> str:
+    """
+    Generate acronym from token name.
+
+    Examples:
+        "Dogecoin Super Mega Moon Edition" → "DSMME"
+        "Wrapped SOL" → "WS"
+        "Dogecoin" → "DOGE" (first 5 chars if no spaces)
+        "AI" → "AI" (keep short names as-is)
+
+    Args:
+        token_name: Full token name
+        token_symbol: Token symbol (fallback)
+
+    Returns:
+        Acronym string
+    """
+    if not token_name or token_name == "Unknown":
+        return token_symbol.upper() if token_symbol else "UNKN"
+
+    # Clean the name
+    name = token_name.strip()
+
+    # If name is very short (≤4 chars), use it as-is
+    if len(name) <= 4:
+        return name.upper()
+
+    # Split by common delimiters (space, hyphen, underscore, dot)
+    words = re.split(r'[\s\-_.]+', name)
+
+    # Remove empty strings and common words
+    words = [w for w in words if w and w.lower() not in ['the', 'a', 'an', 'of', 'and', 'or']]
+
+    # If we have multiple words, use first letter of each
+    if len(words) > 1:
+        acronym = ''.join(word[0].upper() for word in words if word)
+        return acronym
+
+    # Single word with no spaces - use first 4-5 characters
+    if token_symbol and len(token_symbol) <= 5:
+        return token_symbol.upper()
+
+    return name[:5].upper()
+
+
+def generate_axiom_export(
+    early_bidders: List[Dict],
+    token_name: str,
+    token_symbol: str = None,
+    limit: int = 10
+) -> List[Dict]:
+    """
+    Generate Axiom wallet tracker import JSON.
+
+    Args:
+        early_bidders: List of buyer dictionaries from analysis
+        token_name: Token name for acronym generation
+        token_symbol: Token symbol (optional)
+        limit: Maximum number of wallets (default: 10)
+
+    Returns:
+        List of Axiom wallet tracker entries
+    """
+    acronym = generate_token_acronym(token_name, token_symbol)
+
+    axiom_wallets = []
+
+    for index, bidder in enumerate(early_bidders[:limit], start=1):
+        # Round USD amount to whole number
+        first_buy_usd = round(bidder.get('total_usd', bidder.get('first_buy_usd', 0)))
+
+        # Format: (1/10)$54|DSMME
+        wallet_name = f"({index}/{limit})${first_buy_usd}|{acronym}"
+
+        axiom_entry = {
+            "trackedWalletAddress": bidder['wallet_address'],
+            "name": wallet_name,
+            "emoji": "#️⃣",
+            "alertsOnToast": True,
+            "alertsOnBubble": True,
+            "alertsOnFeed": True,
+            "groups": ["Main"],
+            "sound": "bing"
+        }
+
+        axiom_wallets.append(axiom_entry)
+
+    return axiom_wallets
 
 
 class TokenAnalyzer:
