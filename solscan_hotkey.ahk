@@ -302,50 +302,20 @@ global WheelMenuCapturedAddress := ""
 ; ============================================================================
 ; MAIN HOTKEY: F14 (mapped from your mouse button in G HUB)
 ; ============================================================================
-; Opens Solana address in Solscan with filters
-; Hover over address + click the button you mapped to F14
-; ============================================================================
-
-F14::HandleSolscanLookup()
-
-; ============================================================================
-; WHEEL MENU HOTKEY: F13 (mapped from your mouse button in G HUB)
-; ============================================================================
 ; Opens radial wheel menu with all available actions
-; Hover over an address, press F13 to open the menu
+; Hover over an address, press F14 to open the menu
 ; Select action by: moving mouse toward it, or pressing number key (1-6)
+;
+; Available actions:
+; 1. Solscan   - Open address in Solscan with filters
+; 2. Exclude   - Add address to exclusion list (requires active Solscan page)
+; 3. Monitor   - Register address for Telegram monitoring
+; 4. Defined.fi - Open token on defined.fi for analysis
+; 5. Analyze   - Analyze token for early bidders (requires monitor service)
+; 6. Cancel    - Close menu without action
 ; ============================================================================
 
-F13::ShowWheelMenu()
-
-; ============================================================================
-; TELEGRAM MONITOR HOTKEY: Ctrl+F14
-; ============================================================================
-; Register address for Telegram monitoring of large transfers
-; Hold Ctrl + click the button you mapped to F14
-; ============================================================================
-
-^F14::HandleTelegramRegister()
-
-; ============================================================================
-; DEFINED.FI LOOKUP HOTKEY: F15
-; ============================================================================
-; Open Solana token on defined.fi with automatic search
-; Hover over token address + press F15
-; Requires Tampermonkey UserScript for reliable search automation
-; ============================================================================
-
-F15::HandleDefinedFiLookup()
-
-; ============================================================================
-; TOKEN ANALYSIS HOTKEY: F16
-; ============================================================================
-; Analyze token for early bidders (requires monitor service + Helius API)
-; Hover over token address + press F16
-; Results available at http://localhost:5001/analysis
-; ============================================================================
-
-F16::HandleTokenAnalysis()
+F14::ShowWheelMenu()
 
 ; ============================================================================
 ; Core Function: Capture text and open Solscan
@@ -947,6 +917,7 @@ global WheelMenuOriginX := 0
 global WheelMenuOriginY := 0
 global WheelMenuSize := 300
 global WheelMenuLastHovered := 0
+global WheelMenuMouseAngle := 0  ; Current mouse angle for smooth highlight
 
 ShowWheelMenu() {
     global WheelMenuActive, WheelMenuGui, WheelMenuHwnd, WheelMenuHdc, WheelMenuHbm
@@ -1405,4 +1376,4 @@ Escape::CloseWheelMenu()
 A_TrayMenu.Delete()
 A_TrayMenu.Add("Reload Script", (*) => Reload())
 A_TrayMenu.Add("Exit", (*) => ExitApp())
-A_IconTip := "Solscan Hotkey Active`nF13: Wheel Menu (all actions)`nF14: Open address`nF15: Defined.fi lookup`nF16: Analyze token`nCtrl+F14: Monitor address"
+A_IconTip := "Solscan Hotkey Active`nF14: Radial Menu (all actions)`n`nActions: Solscan, Exclude, Monitor, Defined.fi, Analyze, Cancel"
