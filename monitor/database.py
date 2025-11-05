@@ -1,6 +1,20 @@
 """
-Database module for storing analyzed tokens and wallet activity.
-Uses SQLite for persistent storage.
+============================================================================
+Database Module - SENSITIVE DATA STORAGE
+============================================================================
+This module stores analyzed tokens and wallet activity in SQLite.
+
+⚠️  SECURITY WARNING - CONTAINS SENSITIVE TRADING DATA  ⚠️
+
+The database file (solscan_monitor.db) contains:
+- Wallet addresses of early buyers you discovered
+- Token analysis results revealing your research
+- Trading strategies and patterns
+
+This data should NEVER be committed to version control or shared publicly.
+The database files are protected by .gitignore.
+
+============================================================================
 """
 
 import sqlite3
@@ -56,6 +70,9 @@ def init_database():
                 wallet_address TEXT NOT NULL,
                 position INTEGER NOT NULL,
                 first_buy_usd REAL,
+                total_usd REAL,
+                transaction_count INTEGER,
+                average_buy_usd REAL,
                 first_buy_timestamp TIMESTAMP,
                 axiom_name TEXT,
                 FOREIGN KEY (token_id) REFERENCES analyzed_tokens(id) ON DELETE CASCADE,
@@ -94,6 +111,23 @@ def init_database():
             CREATE INDEX IF NOT EXISTS idx_activity_timestamp
             ON wallet_activity(timestamp DESC)
         ''')
+
+        # Run migrations to add new columns to existing tables
+        # Check if total_usd column exists, if not add it
+        cursor.execute("PRAGMA table_info(early_buyer_wallets)")
+        columns = [col[1] for col in cursor.fetchall()]
+
+        if 'total_usd' not in columns:
+            print("[Database] Migrating: Adding total_usd column...")
+            cursor.execute('ALTER TABLE early_buyer_wallets ADD COLUMN total_usd REAL')
+
+        if 'transaction_count' not in columns:
+            print("[Database] Migrating: Adding transaction_count column...")
+            cursor.execute('ALTER TABLE early_buyer_wallets ADD COLUMN transaction_count INTEGER')
+
+        if 'average_buy_usd' not in columns:
+            print("[Database] Migrating: Adding average_buy_usd column...")
+            cursor.execute('ALTER TABLE early_buyer_wallets ADD COLUMN average_buy_usd REAL')
 
         print("[Database] Schema initialized successfully")
 
@@ -149,19 +183,26 @@ def save_analyzed_token(
 
         # Insert early buyer wallets
         for index, bidder in enumerate(early_bidders[:10], start=1):
-            first_buy_usd = round(bidder.get('total_usd', 0))
+            total_usd = bidder.get('total_usd', 0)
+            first_buy_usd = round(total_usd)
+            transaction_count = bidder.get('transaction_count', 1)
+            average_buy_usd = bidder.get('average_buy_usd', total_usd)
             axiom_name = f"({index}/10)${first_buy_usd}|{acronym}"
 
             cursor.execute('''
                 INSERT INTO early_buyer_wallets (
                     token_id, wallet_address, position, first_buy_usd,
+                    total_usd, transaction_count, average_buy_usd,
                     first_buy_timestamp, axiom_name
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 token_id,
                 bidder['wallet_address'],
                 index,
                 first_buy_usd,
+                total_usd,
+                transaction_count,
+                average_buy_usd,
                 bidder.get('first_buy_time'),
                 axiom_name
             ))

@@ -19,6 +19,27 @@ import uuid
 from threading import Thread
 import csv
 import io
+from secure_logging import (
+    log_info, log_success, log_warning, log_error,
+    log_analysis_start, log_analysis_complete, log_token_save,
+    log_address_registered, log_address_removed, sanitize_address
+)
+from debug_config import is_debug_enabled
+
+# ============================================================================
+# OPSEC: PRODUCTION MODE - Disable Sensitive Logging
+# ============================================================================
+# Debug logging is controlled by debug_config.py - change DEBUG_MODE there
+# ============================================================================
+
+def safe_print(*args, **kwargs):
+    """Only print if debug mode is enabled in debug_config.py"""
+    if is_debug_enabled():
+        print(*args, **kwargs)
+
+# Replace built-in print with safe version
+print = safe_print
+# ============================================================================
 
 app = Flask(__name__)
 
@@ -60,7 +81,7 @@ analysis_jobs = {}  # job_id -> {status, result, error}
 
 # Import Helius API and database
 try:
-    from helius_api import TokenAnalyzer, generate_axiom_export, generate_token_acronym
+    from helius_api import TokenAnalyzer, generate_axiom_export, generate_token_acronym, WebhookManager
     import database as db
     helius_enabled = True
     print("✓ Helius API module loaded")
@@ -164,7 +185,7 @@ def register_address():
 
         # Save to file
         if save_addresses():
-            print(f"✓ Registered new address: {address}")
+            log_address_registered(address)  # OPSEC: Sanitized logging
             return jsonify({
                 "status": "success",
                 "message": "Address registered for monitoring",
@@ -318,6 +339,7 @@ def clear_all():
 def run_token_analysis(job_id, token_address, min_usd, time_window_hours):
     """Background worker function to analyze a token"""
     try:
+        print(f"[Job {job_id}] === ANALYSIS STARTED (NEW CODE v7 - ON-CURVE FILTERING) ===")
         print(f"[Job {job_id}] Starting analysis for {token_address}")
         analysis_jobs[job_id]['status'] = 'processing'
 
@@ -328,10 +350,15 @@ def run_token_analysis(job_id, token_address, min_usd, time_window_hours):
             time_window_hours=time_window_hours
         )
 
-        # Extract token info
-        token_info = result.get('token_info', {})
-        token_name = token_info.get('onChainMetadata', {}).get('metadata', {}).get('name', 'Unknown')
-        token_symbol = token_info.get('onChainMetadata', {}).get('metadata', {}).get('symbol')
+        # Extract token info with proper null handling
+        token_info = result.get('token_info')
+        if token_info is None:
+            token_name = 'Unknown'
+            token_symbol = 'UNK'
+        else:
+            metadata = token_info.get('onChainMetadata', {}).get('metadata', {})
+            token_name = metadata.get('name', 'Unknown')
+            token_symbol = metadata.get('symbol', 'UNK')
 
         # Generate acronym
         acronym = generate_token_acronym(token_name, token_symbol)
@@ -344,7 +371,13 @@ def run_token_analysis(job_id, token_address, min_usd, time_window_hours):
             limit=10
         )
 
-        # Save Axiom export to file
+        # ============================================================================
+        # SENSITIVE DATA: Save Axiom export to file
+        # ============================================================================
+        # WARNING: This file contains wallet addresses of early buyers you discovered.
+        # This data reveals your trading strategy and should NEVER be committed to Git.
+        # The axiom_exports/ directory is in .gitignore for your protection.
+        # ============================================================================
         axiom_dir = 'axiom_exports'
         os.makedirs(axiom_dir, exist_ok=True)
         axiom_filename = f"{acronym}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json"
@@ -395,9 +428,13 @@ def run_token_analysis(job_id, token_address, min_usd, time_window_hours):
         print(f"[Job {job_id}] Axiom export saved: {axiom_filepath}")
 
     except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
         print(f"[Job {job_id}] Analysis failed: {str(e)}")
+        print(f"[Job {job_id}] Full traceback:\n{error_trace}")
         analysis_jobs[job_id]['status'] = 'failed'
         analysis_jobs[job_id]['error'] = str(e)
+        analysis_jobs[job_id]['error_trace'] = error_trace
 
 
 @app.route('/analyze/token', methods=['POST'])
@@ -575,6 +612,204 @@ def list_analyses():
 
 
 # ============================================================================
+# Webhook Management Endpoints
+# ============================================================================
+
+@app.route('/webhooks/create', methods=['POST'])
+def create_wallet_webhook():
+    """
+    Create a webhook to monitor wallet addresses
+
+    Expected JSON payload:
+    {
+        "token_id": 123,  # Database token ID
+        "webhook_url": "http://yourserver.com/webhook/callback"  # optional, defaults to this service
+    }
+    """
+    if not helius_enabled:
+        return jsonify({"error": "Helius API not available"}), 503
+
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No JSON data provided"}), 400
+
+        token_id = data.get('token_id')
+        if not token_id:
+            return jsonify({"error": "token_id is required"}), 400
+
+        # Get token details from database
+        token_details = db.get_token_details(token_id)
+        if not token_details:
+            return jsonify({"error": "Token not found"}), 404
+
+        # Get wallet addresses
+        wallets = token_details.get('wallets', [])
+        if not wallets:
+            return jsonify({"error": "No wallets found for this token"}), 400
+
+        wallet_addresses = [w['wallet_address'] for w in wallets]
+
+        # Use provided webhook URL or default to this service
+        webhook_callback_url = data.get('webhook_url', f"http://localhost:5001/webhooks/callback")
+
+        # Create webhook using WebhookManager
+        webhook_manager = WebhookManager(HELIUS_API_KEY)
+        result = webhook_manager.create_webhook(
+            webhook_url=webhook_callback_url,
+            wallet_addresses=wallet_addresses,
+            transaction_types=["TRANSFER", "SWAP"]
+        )
+
+        webhook_id = result.get('webhookID')
+
+        # Update database with webhook ID
+        try:
+            # Note: This would require adding an update function to database.py
+            # For now, we'll just return the webhook ID
+            print(f"[Webhook] Created webhook {webhook_id} for token ID {token_id}")
+        except Exception as e:
+            print(f"[Webhook] Could not update database: {e}")
+
+        return jsonify({
+            "status": "success",
+            "webhook_id": webhook_id,
+            "token_id": token_id,
+            "wallets_monitored": len(wallet_addresses),
+            "webhook_details": result
+        }), 201
+
+    except Exception as e:
+        print(f"⚠ Error creating webhook: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/webhooks/list', methods=['GET'])
+def list_webhooks():
+    """List all active webhooks"""
+    if not helius_enabled:
+        return jsonify({"error": "Helius API not available"}), 503
+
+    try:
+        webhook_manager = WebhookManager(HELIUS_API_KEY)
+        webhooks = webhook_manager.list_webhooks()
+
+        return jsonify({
+            "total": len(webhooks),
+            "webhooks": webhooks
+        }), 200
+
+    except Exception as e:
+        print(f"⚠ Error listing webhooks: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/webhooks/<webhook_id>', methods=['GET'])
+def get_webhook_details(webhook_id):
+    """Get details of a specific webhook"""
+    if not helius_enabled:
+        return jsonify({"error": "Helius API not available"}), 503
+
+    try:
+        webhook_manager = WebhookManager(HELIUS_API_KEY)
+        webhook = webhook_manager.get_webhook(webhook_id)
+
+        return jsonify(webhook), 200
+
+    except Exception as e:
+        print(f"⚠ Error getting webhook: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/webhooks/<webhook_id>', methods=['DELETE'])
+def delete_webhook(webhook_id):
+    """Delete a webhook"""
+    if not helius_enabled:
+        return jsonify({"error": "Helius API not available"}), 503
+
+    try:
+        webhook_manager = WebhookManager(HELIUS_API_KEY)
+        webhook_manager.delete_webhook(webhook_id)
+
+        return jsonify({
+            "status": "success",
+            "message": f"Webhook {webhook_id} deleted"
+        }), 200
+
+    except Exception as e:
+        print(f"⚠ Error deleting webhook: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/webhooks/callback', methods=['POST'])
+def webhook_callback():
+    """
+    Receive webhook notifications from Helius.
+    This endpoint processes wallet activity events.
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No data provided"}), 400
+
+        # Helius sends an array of transactions
+        transactions = data if isinstance(data, list) else [data]
+
+        for tx in transactions:
+            # Extract transaction details
+            signature = tx.get('signature')
+            timestamp = tx.get('timestamp')
+            tx_type = tx.get('type')
+            description = tx.get('description', '')
+
+            # Get account keys involved
+            account_data = tx.get('accountData', [])
+
+            # Extract SOL and token transfers
+            native_transfers = tx.get('nativeTransfers', [])
+            token_transfers = tx.get('tokenTransfers', [])
+
+            # Process each wallet involved in the transaction
+            for transfer in native_transfers + token_transfers:
+                wallet_address = transfer.get('fromUserAccount') or transfer.get('toUserAccount')
+
+                if not wallet_address:
+                    continue
+
+                # Determine activity details
+                if transfer in native_transfers:
+                    sol_amount = transfer.get('amount', 0) / 1e9
+                    token_amount = 0.0
+                    recipient = transfer.get('toUserAccount')
+                else:
+                    sol_amount = 0.0
+                    token_amount = float(transfer.get('tokenAmount', 0))
+                    recipient = transfer.get('toUserAccount')
+
+                # Save to database
+                try:
+                    db.save_wallet_activity(
+                        wallet_address=wallet_address,
+                        transaction_signature=signature,
+                        timestamp=datetime.fromtimestamp(timestamp).isoformat() if timestamp else None,
+                        activity_type=tx_type,
+                        description=description,
+                        sol_amount=sol_amount,
+                        token_amount=token_amount,
+                        recipient_address=recipient
+                    )
+                    print(f"[Webhook] Saved activity for wallet {wallet_address[:8]}...")
+                except Exception as e:
+                    print(f"[Webhook] Failed to save activity: {e}")
+
+        return jsonify({"status": "success", "processed": len(transactions)}), 200
+
+    except Exception as e:
+        print(f"⚠ Webhook callback error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# ============================================================================
 # Dashboard Routes
 # ============================================================================
 
@@ -582,6 +817,60 @@ def list_analyses():
 def dashboard():
     """Serve web dashboard"""
     return render_template('dashboard.html')
+
+
+@app.route('/tokens')
+def token_history():
+    """Serve token analysis history dashboard"""
+    return render_template('token_history.html')
+
+
+# ============================================================================
+# Token History API Endpoints
+# ============================================================================
+
+@app.route('/api/tokens/history', methods=['GET'])
+def get_token_history():
+    """Get list of analyzed tokens from database"""
+    try:
+        limit = request.args.get('limit', 50, type=int)
+        tokens = db.get_analyzed_tokens(limit=limit)
+
+        # Calculate total wallets
+        total_wallets = sum(token.get('wallets_found', 0) for token in tokens)
+
+        return jsonify({
+            'total': len(tokens),
+            'total_wallets': total_wallets,
+            'tokens': tokens
+        }), 200
+
+    except Exception as e:
+        print(f"⚠ Error in /api/tokens/history: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/tokens/<int:token_id>', methods=['GET'])
+def get_token_by_id(token_id):
+    """Get detailed token information including wallets"""
+    try:
+        token_details = db.get_token_details(token_id)
+
+        if not token_details:
+            return jsonify({"error": "Token not found"}), 404
+
+        return jsonify(token_details), 200
+
+    except Exception as e:
+        print(f"⚠ Error in /api/tokens/{token_id}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/debug/config', methods=['GET'])
+def get_debug_config():
+    """Get debug configuration for client-side (JavaScript)"""
+    from debug_config import get_debug_js_flag
+    return jsonify({"debug": get_debug_js_flag()}), 200
 
 
 if __name__ == '__main__':

@@ -4,9 +4,27 @@
 # This file tells Git which files to never commit to GitHub
 # ============================================================================
 
-# Private data - monitored addresses and analysis results
+# ============================================================================
+# SENSITIVE DATA - NEVER COMMIT THESE FILES
+# ============================================================================
+# These files contain wallet addresses, transaction data, and personal info
+# Exposing this data could compromise your trading strategies and privacy
+# ============================================================================
+
+# Monitored wallet addresses (contains your tracked addresses)
 monitor/monitored_addresses.json
+
+# Token analysis results (contains early buyer wallets you discovered)
 monitor/analysis_results/
+
+# Axiom wallet tracker exports (contains wallet addresses and metadata)
+monitor/axiom_exports/
+
+# SQLite database (contains all analyzed tokens and wallet data)
+monitor/solscan_monitor.db
+monitor/*.db
+
+# API keys and configuration
 monitor/config.json
 
 # Python cache and temp files
