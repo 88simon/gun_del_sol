@@ -82,7 +82,7 @@ analysis_jobs = {}  # job_id -> {status, result, error}
 # Import Helius API and database
 try:
     from helius_api import TokenAnalyzer, generate_axiom_export, generate_token_acronym, WebhookManager
-    import database as db
+    import analyzed_tokens_db as db
     helius_enabled = True
     print("✓ Helius API module loaded")
     print("✓ Database module loaded")
