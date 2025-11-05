@@ -385,14 +385,23 @@ RecordHotkey(guiObj, editControl, *) {
 
     ; Force cleanup if stuck in active state
     if (hookActive) {
-        ; Try to force cleanup
+        ; Try to force cleanup - disable all possible hotkeys
         try {
-            if (currentIh)
-                currentIh.Stop()
+            Hotkey "Escape", "Off"
             for btn in mouseButtons {
                 try Hotkey btn, "Off"
+                try Hotkey "^" . btn, "Off"
+                try Hotkey "!" . btn, "Off"
+                try Hotkey "+" . btn, "Off"
+                try Hotkey "#" . btn, "Off"
             }
-            try Hotkey "Escape", "Off"
+            Loop 26 {
+                letter := Chr(96 + A_Index)
+                try Hotkey "*~" . letter, "Off"
+            }
+            Loop 24 {
+                try Hotkey "*~F" . A_Index, "Off"
+            }
             if (currentRecordGui)
                 currentRecordGui.Destroy()
         }
@@ -422,101 +431,94 @@ RecordHotkey(guiObj, editControl, *) {
 
     recordGui.Show("w300 h100")
 
-    ; Use InputHook to capture keyboard input
-    ih := InputHook("L1 T5")  ; Length 1, Timeout 5 seconds
-    currentIh := ih
+    ; Use hotkey-based capture for reliable combination detection
+    ; Register a hotkey for every possible key
+    currentIh := ""  ; Not using InputHook anymore
 
-    ; Define the callback function separately
-    ih.OnEnd := InputHookEnded
-
-    ; Start the input hook
-    ih.Start()
-
-    ; Also capture mouse buttons using hotkeys (InputHook doesn't capture these)
-    for btn in mouseButtons {
-        try {
-            Hotkey btn, RecordMouseButton, "On"
-        }
-    }
-
-    ; ESC to cancel
+    ; ESC to cancel (must be first)
     try {
         Hotkey "Escape", CancelHotkeyRecording, "On"
     }
 
-    ; Nested function for InputHook end
-    InputHookEnded(inputHook) {
+    ; Also capture mouse buttons
+    for btn in mouseButtons {
+        try {
+            Hotkey btn, CaptureAnyKey, "On"
+            Hotkey "^" . btn, CaptureAnyKey, "On"
+            Hotkey "!" . btn, CaptureAnyKey, "On"
+            Hotkey "+" . btn, CaptureAnyKey, "On"
+            Hotkey "#" . btn, CaptureAnyKey, "On"
+        }
+    }
+
+    ; Use a wildcard hotkey to capture any key combination
+    try {
+        Hotkey "*~a", CaptureAnyKey, "On"
+        Hotkey "*~b", CaptureAnyKey, "On"
+        Hotkey "*~c", CaptureAnyKey, "On"
+        Hotkey "*~d", CaptureAnyKey, "On"
+        Hotkey "*~e", CaptureAnyKey, "On"
+        Hotkey "*~f", CaptureAnyKey, "On"
+        Hotkey "*~g", CaptureAnyKey, "On"
+        Hotkey "*~h", CaptureAnyKey, "On"
+        Hotkey "*~i", CaptureAnyKey, "On"
+        Hotkey "*~j", CaptureAnyKey, "On"
+        Hotkey "*~k", CaptureAnyKey, "On"
+        Hotkey "*~l", CaptureAnyKey, "On"
+        Hotkey "*~m", CaptureAnyKey, "On"
+        Hotkey "*~n", CaptureAnyKey, "On"
+        Hotkey "*~o", CaptureAnyKey, "On"
+        Hotkey "*~p", CaptureAnyKey, "On"
+        Hotkey "*~q", CaptureAnyKey, "On"
+        Hotkey "*~r", CaptureAnyKey, "On"
+        Hotkey "*~s", CaptureAnyKey, "On"
+        Hotkey "*~t", CaptureAnyKey, "On"
+        Hotkey "*~u", CaptureAnyKey, "On"
+        Hotkey "*~v", CaptureAnyKey, "On"
+        Hotkey "*~w", CaptureAnyKey, "On"
+        Hotkey "*~x", CaptureAnyKey, "On"
+        Hotkey "*~y", CaptureAnyKey, "On"
+        Hotkey "*~z", CaptureAnyKey, "On"
+
+        ; Function keys
+        Loop 24 {
+            Hotkey "*~F" . A_Index, CaptureAnyKey, "On"
+        }
+
+        ; Number keys
+        Loop 10 {
+            Hotkey "*~" . (A_Index - 1), CaptureAnyKey, "On"
+        }
+
+        ; Special keys
+        Hotkey "*~Space", CaptureAnyKey, "On"
+        Hotkey "*~Tab", CaptureAnyKey, "On"
+        Hotkey "*~Enter", CaptureAnyKey, "On"
+        Hotkey "*~BackSpace", CaptureAnyKey, "On"
+        Hotkey "*~Delete", CaptureAnyKey, "On"
+        Hotkey "*~Insert", CaptureAnyKey, "On"
+        Hotkey "*~Home", CaptureAnyKey, "On"
+        Hotkey "*~End", CaptureAnyKey, "On"
+        Hotkey "*~PgUp", CaptureAnyKey, "On"
+        Hotkey "*~PgDn", CaptureAnyKey, "On"
+        Hotkey "*~Up", CaptureAnyKey, "On"
+        Hotkey "*~Down", CaptureAnyKey, "On"
+        Hotkey "*~Left", CaptureAnyKey, "On"
+        Hotkey "*~Right", CaptureAnyKey, "On"
+        Hotkey "*~``", CaptureAnyKey, "On"
+    }
+
+    ; Capture function
+    CaptureAnyKey(hotkeyName) {
         if (!hookActive || escapePressed)
             return
 
-        ; Get the key
-        keyName := inputHook.EndKey
+        ; Parse the hotkey name to get the actual key combination
+        capturedKey := StrReplace(hotkeyName, "*", "")
+        capturedKey := StrReplace(capturedKey, "~", "")
 
-        ; Special handling for function keys and other keys
-        if (keyName == "")
-            keyName := inputHook.Input
-
-        ; Ignore escape key
-        if (keyName == "Escape" || keyName == "Esc") {
-            return
-        }
-
-        ; Ignore empty input
-        if (keyName == "") {
-            return
-        }
-
-        ; Get modifiers
-        modifiers := ""
-        if GetKeyState("Ctrl")
-            modifiers .= "^"
-        if GetKeyState("Alt")
-            modifiers .= "!"
-        if GetKeyState("Shift")
-            modifiers .= "+"
-        if GetKeyState("LWin") || GetKeyState("RWin")
-            modifiers .= "#"
-
-        ; Special handling for backtick/tilde key - convert to proper AHK syntax
-        if (keyName == "``" || keyName == "~") {
-            keyName := "``"  ; Double backtick for AHK hotkey syntax
-        } else if (StrLen(keyName) == 1) {
-            ; For other single characters, try to get the key name
-            actualKeyName := GetKeyName(keyName)
-            if (actualKeyName != "")
-                keyName := actualKeyName
-        }
-
-        capturedKey := modifiers . keyName
         currentStatusText.Text := "Captured: " . capturedKey
         CleanupAndFinish(capturedKey)
-    }
-
-    ; Mouse button capture
-    RecordMouseButton(*) {
-        if (!hookActive)
-            return
-
-        ; Find which button was pressed
-        for btn in mouseButtons {
-            if GetKeyState(btn, "P") {
-                ; Get modifiers
-                modifiers := ""
-                if GetKeyState("Ctrl")
-                    modifiers .= "^"
-                if GetKeyState("Alt")
-                    modifiers .= "!"
-                if GetKeyState("Shift")
-                    modifiers .= "+"
-                if GetKeyState("LWin") || GetKeyState("RWin")
-                    modifiers .= "#"
-
-                capturedKey := modifiers . btn
-                currentStatusText.Text := "Captured: " . capturedKey
-                CleanupAndFinish(capturedKey)
-                return
-            }
-        }
     }
 
     ; Cancel recording
@@ -533,22 +535,61 @@ RecordHotkey(guiObj, editControl, *) {
         ; Ensure hookActive is always set to false
         hookActive := false
 
-        ; Wrap everything in try-catch to ensure cleanup always completes
+        ; Disable ESC hotkey
         try {
-            ; Stop input hook
-            if (currentIh)
-                currentIh.Stop()
+            Hotkey "Escape", "Off"
         }
 
-        ; Disable all hotkeys
+        ; Disable mouse button hotkeys
         try {
             for btn in mouseButtons {
                 try Hotkey btn, "Off"
+                try Hotkey "^" . btn, "Off"
+                try Hotkey "!" . btn, "Off"
+                try Hotkey "+" . btn, "Off"
+                try Hotkey "#" . btn, "Off"
             }
         }
 
+        ; Disable all letter hotkeys
         try {
-            Hotkey "Escape", "Off"
+            Loop 26 {
+                letter := Chr(96 + A_Index)  ; a-z
+                try Hotkey "*~" . letter, "Off"
+            }
+        }
+
+        ; Disable function keys
+        try {
+            Loop 24 {
+                try Hotkey "*~F" . A_Index, "Off"
+            }
+        }
+
+        ; Disable number keys
+        try {
+            Loop 10 {
+                try Hotkey "*~" . (A_Index - 1), "Off"
+            }
+        }
+
+        ; Disable special keys
+        try {
+            Hotkey "*~Space", "Off"
+            Hotkey "*~Tab", "Off"
+            Hotkey "*~Enter", "Off"
+            Hotkey "*~BackSpace", "Off"
+            Hotkey "*~Delete", "Off"
+            Hotkey "*~Insert", "Off"
+            Hotkey "*~Home", "Off"
+            Hotkey "*~End", "Off"
+            Hotkey "*~PgUp", "Off"
+            Hotkey "*~PgDn", "Off"
+            Hotkey "*~Up", "Off"
+            Hotkey "*~Down", "Off"
+            Hotkey "*~Left", "Off"
+            Hotkey "*~Right", "Off"
+            Hotkey "*~``", "Off"
         }
 
         ; Re-enable the wheel menu hotkey
