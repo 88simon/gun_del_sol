@@ -290,49 +290,314 @@ ShutdownGdip(*) {
 ; Initialize GDI+ on startup
 InitGdip()
 
+; ============================================================================
+; Settings Management
+; ============================================================================
+
+global WheelMenuHotkey := "F14"  ; Current hotkey for wheel menu
+global WheelMenuActions := [
+    "Solscan",      ; Wedge 1 (Top)
+    "Exclude",      ; Wedge 2 (Top-Right)
+    "Monitor",      ; Wedge 3 (Bottom-Right)
+    "Defined.fi",   ; Wedge 4 (Bottom)
+    "Analyze",      ; Wedge 5 (Bottom-Left)
+    "Cancel"        ; Wedge 6 (Top-Left)
+]
+
+LoadSettings() {
+    global WheelMenuHotkey, WheelMenuActions
+
+    settingsFile := A_ScriptDir . "\settings.ini"
+
+    ; Load hotkey (default: F14)
+    WheelMenuHotkey := IniRead(settingsFile, "Hotkeys", "WheelMenu", "F14")
+
+    ; Load wedge actions
+    defaultActions := ["Solscan", "Exclude", "Monitor", "Defined.fi", "Analyze", "Cancel"]
+    Loop 6 {
+        WheelMenuActions[A_Index] := IniRead(settingsFile, "Actions", "Wedge" . A_Index, defaultActions[A_Index])
+    }
+}
+
+SaveSettings() {
+    global WheelMenuHotkey, WheelMenuActions
+
+    settingsFile := A_ScriptDir . "\settings.ini"
+
+    ; Save hotkey
+    IniWrite(WheelMenuHotkey, settingsFile, "Hotkeys", "WheelMenu")
+
+    ; Save wedge actions
+    Loop 6 {
+        IniWrite(WheelMenuActions[A_Index], settingsFile, "Actions", "Wedge" . A_Index)
+    }
+}
+
+ShowSettingsWindow(*) {
+    global WheelMenuHotkey, WheelMenuActions
+
+    settingsGui := Gui("+AlwaysOnTop", "Solscan Hotkey Settings")
+
+    ; Hotkey selection section
+    settingsGui.Add("GroupBox", "x10 y10 w380 h100", "Wheel Menu Hotkey")
+    settingsGui.Add("Text", "x20 y35", "Press any key or mouse button:")
+    hotkeyEdit := settingsGui.Add("Edit", "x20 y55 w200 vHotkeyInput ReadOnly", WheelMenuHotkey)
+    settingsGui.Add("Button", "x230 y55 w80", "Record Key").OnEvent("Click", RecordHotkey.Bind(settingsGui, hotkeyEdit))
+    settingsGui.Add("Text", "x20 y85 cGray", "Examples: F13-F24, XButton1, XButton2, ^!F1 (Ctrl+Alt+F1)")
+
+    ; Pie wedge actions section
+    settingsGui.Add("GroupBox", "x10 y120 w380 h225", "Pie Wedge Actions")
+
+    actionList := ["Solscan", "Exclude", "Monitor", "Defined.fi", "Analyze", "Cancel"]
+    wedgeNames := ["Top", "Top-Right", "Bottom-Right", "Bottom", "Bottom-Left", "Top-Left"]
+
+    Loop 6 {
+        y := 140 + (A_Index - 1) * 35
+        settingsGui.Add("Text", "x20 y" . y, "Wedge " . A_Index . " (" . wedgeNames[A_Index] . "):")
+        dropdown := settingsGui.Add("DropDownList", "x200 y" . (y-3) . " w170 vAction" . A_Index, actionList)
+
+        ; Select current action - find index in actionList
+        currentAction := WheelMenuActions[A_Index]
+        for index, action in actionList {
+            if (action == currentAction) {
+                dropdown.Value := index
+                break
+            }
+        }
+    }
+
+    ; Buttons
+    settingsGui.Add("Button", "x10 y355 w120", "Save").OnEvent("Click", SaveSettingsFromGui.Bind(settingsGui))
+    settingsGui.Add("Button", "x140 y355 w120", "Cancel").OnEvent("Click", (*) => settingsGui.Destroy())
+
+    settingsGui.Show("w400 h395")
+}
+
+RecordHotkey(guiObj, editControl, *) {
+    static hookActive := false
+    static currentIh := ""
+    static currentRecordGui := ""
+    static currentStatusText := ""
+    static currentGuiObj := ""
+    static currentEditControl := ""
+    static mouseButtons := ["XButton1", "XButton2", "MButton", "LButton", "RButton"]
+
+    ; Prevent multiple recording sessions
+    if (hookActive) {
+        return
+    }
+
+    ; Store references for callbacks
+    currentGuiObj := guiObj
+    currentEditControl := editControl
+    hookActive := true
+
+    ; Create a modal dialog for recording the hotkey
+    recordGui := Gui("+AlwaysOnTop +ToolWindow", "Record Hotkey")
+    recordGui.Add("Text", "x20 y20 w260", "Press any key or mouse button...`n`nPress ESC to cancel")
+    statusText := recordGui.Add("Text", "x20 y60 w260 vRecordedKey", "Waiting...")
+    currentRecordGui := recordGui
+    currentStatusText := statusText
+
+    recordGui.Show("w300 h100")
+
+    ; Use InputHook to capture keyboard input
+    ih := InputHook("L1 T5")  ; Length 1, Timeout 5 seconds
+    currentIh := ih
+
+    ; Define the callback function separately
+    ih.OnEnd := InputHookEnded
+
+    ; Start the input hook
+    ih.Start()
+
+    ; Also capture mouse buttons using hotkeys (InputHook doesn't capture these)
+    for btn in mouseButtons {
+        try {
+            Hotkey btn, RecordMouseButton, "On"
+        }
+    }
+
+    ; ESC to cancel
+    try {
+        Hotkey "Escape", CancelHotkeyRecording, "On"
+    }
+
+    ; Nested function for InputHook end
+    InputHookEnded(inputHook) {
+        if (!hookActive)
+            return
+
+        ; Get modifiers
+        modifiers := ""
+        if GetKeyState("Ctrl")
+            modifiers .= "^"
+        if GetKeyState("Alt")
+            modifiers .= "!"
+        if GetKeyState("Shift")
+            modifiers .= "+"
+        if GetKeyState("LWin") || GetKeyState("RWin")
+            modifiers .= "#"
+
+        ; Get the key
+        keyName := inputHook.EndKey
+
+        ; Special handling for function keys and other keys
+        if (keyName == "")
+            keyName := inputHook.Input
+
+        if (keyName != "" && keyName != "Escape") {
+            capturedKey := modifiers . keyName
+            currentStatusText.Text := "Captured: " . capturedKey
+            CleanupAndFinish(capturedKey)
+        }
+    }
+
+    ; Mouse button capture
+    RecordMouseButton(*) {
+        if (!hookActive)
+            return
+
+        ; Find which button was pressed
+        for btn in mouseButtons {
+            if GetKeyState(btn, "P") {
+                ; Get modifiers
+                modifiers := ""
+                if GetKeyState("Ctrl")
+                    modifiers .= "^"
+                if GetKeyState("Alt")
+                    modifiers .= "!"
+                if GetKeyState("Shift")
+                    modifiers .= "+"
+                if GetKeyState("LWin") || GetKeyState("RWin")
+                    modifiers .= "#"
+
+                capturedKey := modifiers . btn
+                currentStatusText.Text := "Captured: " . capturedKey
+                CleanupAndFinish(capturedKey)
+                return
+            }
+        }
+    }
+
+    ; Cancel recording
+    CancelHotkeyRecording(*) {
+        if (!hookActive)
+            return
+
+        CleanupAndFinish("")
+    }
+
+    ; Cleanup and finish
+    CleanupAndFinish(capturedKey) {
+        hookActive := false
+
+        ; Stop input hook
+        if (currentIh)
+            currentIh.Stop()
+
+        ; Disable all hotkeys
+        for btn in mouseButtons {
+            try Hotkey btn, "Off"
+        }
+        try Hotkey "Escape", "Off"
+
+        ; Update the edit control if we captured a key
+        if (capturedKey != "") {
+            currentEditControl.Value := capturedKey
+        }
+
+        ; Close recording dialog
+        if (currentRecordGui)
+            currentRecordGui.Destroy()
+
+        ; Clear static references
+        currentIh := ""
+        currentRecordGui := ""
+        currentStatusText := ""
+        currentGuiObj := ""
+        currentEditControl := ""
+    }
+}
+
+SaveSettingsFromGui(guiObj, *) {
+    global WheelMenuHotkey, WheelMenuActions
+
+    ; Get submitted values
+    submitted := guiObj.Submit(false)
+
+    ; Get hotkey from text field
+    WheelMenuHotkey := submitted.HotkeyInput
+
+    ; Validate hotkey is not empty
+    if (WheelMenuHotkey == "") {
+        MsgBox("Please record a hotkey before saving!", "Invalid Hotkey", "OK Iconx")
+        return
+    }
+
+    ; Get wedge actions - need to access controls directly to get numeric index
+    actionList := ["Solscan", "Exclude", "Monitor", "Defined.fi", "Analyze", "Cancel"]
+    Loop 6 {
+        ; Get the control by name and read its Value property (which is the numeric index)
+        controlName := "Action" . A_Index
+        control := guiObj[controlName]
+        actionIndex := control.Value  ; This returns the numeric index (1-6)
+        WheelMenuActions[A_Index] := actionList[actionIndex]
+    }
+
+    ; Save to INI file
+    SaveSettings()
+
+    ; Close settings window
+    guiObj.Destroy()
+
+    ; Show confirmation and reload
+    MsgBox("Settings saved!`n`nThe script will now reload to apply the new hotkey.", "Settings Saved", "OK")
+    Reload()
+}
+
+; Load settings on startup
+LoadSettings()
+
 ; Legacy global variables (kept for F14 backward compatibility)
 global currentMainAddress := ""
 global excludedAddressesList := []
 
 ; Wheel menu captured address (stores address at menu open time)
 global WheelMenuCapturedAddress := ""
-global F14KeyPressed := false  ; Track F14 key state to prevent repeat triggers
+global WheelMenuHotkeyPressed := false  ; Track hotkey state to prevent repeat triggers
 
 ; ============================================================================
-; MAIN HOTKEY: F14 (mapped from your mouse button in G HUB)
+; DYNAMIC HOTKEY: Configurable via Settings
 ; ============================================================================
 ; Opens radial wheel menu with Blender-style press-and-hold interaction
 ;
 ; INTERACTION:
-; - Press and HOLD F14 → Menu opens, move mouse to desired action
-; - Release F14 → Activates the action your mouse is pointing toward
+; - Press and HOLD hotkey → Menu opens, move mouse to desired action
+; - Release hotkey → Activates the action your mouse is pointing toward
 ; - OR press number key (1-6) while holding to select action directly
 ;
-; Available actions:
-; 1. Solscan   - Open address in Solscan with filters
-; 2. Exclude   - Add address to exclusion list (requires active Solscan page)
-; 3. Monitor   - Register address for Telegram monitoring
-; 4. Defined.fi - Open token on defined.fi for analysis
-; 5. Analyze   - Analyze token for early bidders (requires monitor service)
-; 6. Cancel    - Close menu without action
+; To change the hotkey, right-click tray icon → Settings
 ; ============================================================================
 
-F14:: {
-    global F14KeyPressed
+; Register the configured hotkey dynamically
+Hotkey WheelMenuHotkey, HandleWheelMenuPress
+Hotkey WheelMenuHotkey . " Up", HandleWheelMenuRelease
+
+HandleWheelMenuPress(*) {
+    global WheelMenuHotkeyPressed
     ; Only open menu on first press, ignore repeat triggers while held
-    if (!F14KeyPressed) {
-        F14KeyPressed := true
+    if (!WheelMenuHotkeyPressed) {
+        WheelMenuHotkeyPressed := true
         ShowWheelMenu()
     }
 }
 
-F14 Up::HandleWheelMenuRelease()
-
-HandleWheelMenuRelease() {
-    global WheelMenuActive, WheelMenuLastHovered, F14KeyPressed
+HandleWheelMenuRelease(*) {
+    global WheelMenuActive, WheelMenuLastHovered, WheelMenuHotkeyPressed
 
     ; Reset key state
-    F14KeyPressed := false
+    WheelMenuHotkeyPressed := false
 
     ; Only handle release if menu is active
     if (!WheelMenuActive) {
@@ -949,17 +1214,67 @@ global WheelMenuOriginY := 0
 global WheelMenuSize := 300
 global WheelMenuLastHovered := 0
 global WheelMenuMouseAngle := 0  ; Current mouse angle for smooth highlight
+global WheelMenuInitialized := false  ; Track if GUI has been pre-created
+
+; ============================================================================
+; Initialize Wheel Menu (Pre-create GUI for instant display)
+; ============================================================================
+; This runs once on script startup to create all GUI resources
+; Subsequent menu openings just show/hide the pre-created window (instant!)
+; ============================================================================
+
+InitializeWheelMenu() {
+    global WheelMenuGui, WheelMenuHwnd, WheelMenuHdc, WheelMenuHbm
+    global WheelMenuGraphics, WheelMenuSize, WheelMenuInitialized
+
+    if (WheelMenuInitialized) {
+        return  ; Already initialized
+    }
+
+    ; Create fullscreen layered GUI window (hidden initially)
+    WheelMenuGui := Gui("-Caption +E0x80000 +AlwaysOnTop +ToolWindow")
+    WheelMenuHwnd := WheelMenuGui.Hwnd
+
+    ; Create persistent GDI+ objects for rendering
+    WheelMenuHbm := CreateDIBSection(WheelMenuSize, WheelMenuSize)
+    if (!WheelMenuHbm) {
+        MsgBox "Failed to create wheel menu bitmap!"
+        return
+    }
+
+    WheelMenuHdc := CreateCompatibleDC()
+    if (!WheelMenuHdc) {
+        MsgBox "Failed to create wheel menu device context!"
+        return
+    }
+
+    SelectObject(WheelMenuHdc, WheelMenuHbm)
+    WheelMenuGraphics := Gdip_GraphicsFromHDC(WheelMenuHdc)
+    if (!WheelMenuGraphics) {
+        MsgBox "Failed to create wheel menu graphics!"
+        return
+    }
+
+    Gdip_SetSmoothingMode(WheelMenuGraphics, 4)
+
+    WheelMenuInitialized := true
+}
 
 ShowWheelMenu() {
     global WheelMenuActive, WheelMenuGui, WheelMenuHwnd, WheelMenuHdc, WheelMenuHbm
     global WheelMenuGraphics, WheelMenuCenterX, WheelMenuCenterY
     global WheelMenuOriginX, WheelMenuOriginY, WheelMenuSize, WheelMenuLastHovered
-    global WheelMenuCapturedAddress
+    global WheelMenuCapturedAddress, WheelMenuInitialized
 
-    ; If menu is already open, close it first to reopen at new location
+    ; Ensure GUI is initialized (lazy initialization)
+    if (!WheelMenuInitialized) {
+        InitializeWheelMenu()
+    }
+
+    ; If menu is already open, just close it
     if (WheelMenuActive) {
         CloseWheelMenu()
-        Sleep 50  ; Small delay to ensure cleanup completes
+        return
     }
 
     ; CRITICAL: Capture address BEFORE opening menu (before mouse moves away)
@@ -998,33 +1313,8 @@ ShowWheelMenu() {
     WheelMenuCenterX := WheelMenuSize // 2
     WheelMenuCenterY := WheelMenuSize // 2
 
-    ; Create fullscreen layered GUI window to block mouse input to underlying windows
-    ; This prevents hover effects on hyperlinks/buttons underneath while menu is open
-    WheelMenuGui := Gui("-Caption +E0x80000 +AlwaysOnTop +ToolWindow")
+    ; Show the pre-created GUI window (instant!)
     WheelMenuGui.Show("x0 y0 w" . A_ScreenWidth . " h" . A_ScreenHeight . " NoActivate")
-    WheelMenuHwnd := WheelMenuGui.Hwnd
-
-    ; Create persistent GDI+ objects
-    WheelMenuHbm := CreateDIBSection(WheelMenuSize, WheelMenuSize)
-    if (!WheelMenuHbm) {
-        CloseWheelMenu()
-        return
-    }
-
-    WheelMenuHdc := CreateCompatibleDC()
-    if (!WheelMenuHdc) {
-        CloseWheelMenu()
-        return
-    }
-
-    SelectObject(WheelMenuHdc, WheelMenuHbm)
-    WheelMenuGraphics := Gdip_GraphicsFromHDC(WheelMenuHdc)
-    if (!WheelMenuGraphics) {
-        CloseWheelMenu()
-        return
-    }
-
-    Gdip_SetSmoothingMode(WheelMenuGraphics, 4)
 
     ; Initial draw
     WheelMenuLastHovered := 0
@@ -1155,7 +1445,9 @@ RedrawWheelMenu(hoveredSlice) {
     Gdip_SetCompositingMode(WheelMenuGraphics, 0)
 
     ; Draw text labels as floating boxes outside the ring
-    labels := ["Solscan", "Exclude", "Monitor", "Defined.fi", "Analyze", "Cancel"]
+    ; Use dynamic labels from settings
+    global WheelMenuActions
+    labels := WheelMenuActions
 
     fontFamily := Gdip_CreateFontFamily("Inter")
     if (!fontFamily) {
@@ -1270,7 +1562,7 @@ WheelMenuClickHandler(wParam, lParam, msg, hwnd) {
 }
 
 SelectWheelAction(actionId) {
-    global WheelMenuCapturedAddress
+    global WheelMenuCapturedAddress, WheelMenuActions
 
     ; Close menu first
     CloseWheelMenu()
@@ -1278,20 +1570,28 @@ SelectWheelAction(actionId) {
     ; Small delay
     Sleep 50
 
-    ; Check if we have a captured address
+    ; Get the action name from configured actions
+    actionName := WheelMenuActions[actionId]
+
+    ; Handle "Cancel" action without needing an address
+    if (actionName == "Cancel") {
+        return
+    }
+
+    ; Check if we have a captured address for other actions
     if (WheelMenuCapturedAddress == "") {
         ShowNotification("No address captured", "Hover over an address before opening menu")
         return
     }
 
-    ; Execute action using pre-captured address
-    switch actionId {
-        case 1:  ; Solscan
+    ; Execute action based on configured action name
+    switch actionName {
+        case "Solscan":
             global currentMainAddress := WheelMenuCapturedAddress
             global excludedAddressesList := []
             OpenSolscan(WheelMenuCapturedAddress)
             ShowNotification("Opening Solscan...", WheelMenuCapturedAddress)
-        case 2:  ; Exclude
+        case "Exclude":
             ; Get current URL data for exclusion
             urlData := GetAddressAndExclusionsFromURL()
             if (urlData.address != "") {
@@ -1311,28 +1611,24 @@ SelectWheelAction(actionId) {
             } else {
                 ShowNotification("No Solscan page detected", "Open a Solscan address page first")
             }
-        case 3:  ; Monitor
+        case "Monitor":
             RegisterAddressWithMonitor(WheelMenuCapturedAddress)
-        case 4:  ; Defined.fi
+        case "Defined.fi":
             url := "https://defined.fi/#autosearch=" . WheelMenuCapturedAddress
             Run url
             ShowNotification("Opening defined.fi", WheelMenuCapturedAddress)
-        case 5:  ; Analyze
+        case "Analyze":
             AnalyzeTokenWithService(WheelMenuCapturedAddress)
-        case 6:  ; Cancel
+        case "Cancel":
             return
     }
 }
 
 CloseWheelMenu() {
-    global WheelMenuActive, WheelMenuGui, WheelMenuGraphics, WheelMenuHdc, WheelMenuHbm
+    global WheelMenuActive, WheelMenuGui
     global WheelMenuLastHovered
 
     if (!WheelMenuActive) {
-        if (WheelMenuGui) {
-            try WheelMenuGui.Destroy()
-            WheelMenuGui := ""
-        }
         return
     }
 
@@ -1345,26 +1641,9 @@ CloseWheelMenu() {
     WheelMenuActive := false
     WheelMenuLastHovered := 0
 
-    ; Clean up GDI+ resources
-    if (WheelMenuGraphics) {
-        Gdip_DeleteGraphics(WheelMenuGraphics)
-        WheelMenuGraphics := 0
-    }
-
-    if (WheelMenuHdc) {
-        DeleteDC(WheelMenuHdc)
-        WheelMenuHdc := 0
-    }
-
-    if (WheelMenuHbm) {
-        DeleteObject(WheelMenuHbm)
-        WheelMenuHbm := 0
-    }
-
-    ; Destroy GUI
+    ; Hide GUI (don't destroy - we'll reuse it next time!)
     if (WheelMenuGui) {
-        try WheelMenuGui.Destroy()
-        WheelMenuGui := ""
+        try WheelMenuGui.Hide()
     }
 }
 
@@ -1394,6 +1673,8 @@ Escape::CloseWheelMenu()
 ; ============================================================================
 
 A_TrayMenu.Delete()
+A_TrayMenu.Add("Settings...", ShowSettingsWindow)
+A_TrayMenu.Add()  ; Separator
 A_TrayMenu.Add("Reload Script", (*) => Reload())
 A_TrayMenu.Add("Exit", (*) => ExitApp())
-A_IconTip := "Solscan Hotkey Active`nF14: Radial Menu (all actions)`n`nActions: Solscan, Exclude, Monitor, Defined.fi, Analyze, Cancel"
+A_IconTip := "Solscan Hotkey Active`n" . WheelMenuHotkey . ": Radial Menu`n`nRight-click tray icon → Settings to customize"
