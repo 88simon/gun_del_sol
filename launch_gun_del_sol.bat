@@ -1,12 +1,12 @@
 @echo off
 REM ============================================================================
-REM Solscan Hotkey Launcher
+REM Gun Del Sol Launcher
 REM ============================================================================
-REM Starts the AutoHotkey script silently in the background
+REM Starts the Gun Del Sol AutoHotkey script in the background
 REM ============================================================================
 
 set SCRIPT_DIR=%~dp0
-set SCRIPT_NAME=solscan_hotkey.ahk
+set SCRIPT_NAME=gun_del_sol.ahk
 set SCRIPT_PATH=%SCRIPT_DIR%%SCRIPT_NAME%
 
 REM Check if AutoHotkey v2 is installed
@@ -37,18 +37,18 @@ if not exist "%SCRIPT_PATH%" (
 )
 
 REM Kill existing instance if running (try all possible v2 executables)
-taskkill /F /IM AutoHotkeyU64.exe /FI "WINDOWTITLE eq solscan_hotkey.ahk*" >nul 2>nul
-taskkill /F /IM AutoHotkey64.exe /FI "WINDOWTITLE eq solscan_hotkey.ahk*" >nul 2>nul
-taskkill /F /IM AutoHotkey.exe /FI "WINDOWTITLE eq solscan_hotkey.ahk*" >nul 2>nul
+taskkill /F /IM AutoHotkeyU64.exe /FI "WINDOWTITLE eq gun_del_sol.ahk*" >nul 2>nul
+taskkill /F /IM AutoHotkey64.exe /FI "WINDOWTITLE eq gun_del_sol.ahk*" >nul 2>nul
+taskkill /F /IM AutoHotkey.exe /FI "WINDOWTITLE eq gun_del_sol.ahk*" >nul 2>nul
 
 REM Start the script
-echo Starting Solscan Hotkey...
+echo Starting Gun Del Sol...
 start "" "%SCRIPT_PATH%"
 
 REM Confirmation
 timeout /t 2 /nobreak >nul
 echo.
-echo Solscan Hotkey is now active!
+echo Gun Del Sol is now active!
 echo Look for the green "H" icon in your system tray.
 echo.
 echo Press your mouse side button (XButton1) over any Solana address.

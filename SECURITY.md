@@ -32,7 +32,7 @@ The following contain your private trading research and strategies:
 - **Risk**: Reveals addresses of interest
 - **Protection**: Added to `.gitignore`
 
-#### 5. `config.json`
+#### 5. `config.json` (Gun Del Sol settings)
 - **Contains**: Your Helius API key
 - **Risk**: API key theft and unauthorized usage
 - **Protection**: Added to `.gitignore`

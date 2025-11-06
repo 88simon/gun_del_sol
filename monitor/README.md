@@ -1,6 +1,6 @@
-# Monitoring and Analysis Service
+# Gun Del Sol - Monitoring and Analysis Service
 
-Local Flask service that complements the AutoHotkey script. It stores wallet addresses for future alerts, powers the F16 token analysis flow, and surfaces results through a dashboard and REST API.
+Local Flask service that complements the Gun Del Sol AutoHotkey script. It stores wallet addresses for future alerts, powers the F16 token analysis flow, and surfaces results through a dashboard and REST API. This service integrates with the Solscan blockchain explorer to enrich your analysis.
 
 ## Feature Snapshot
 
@@ -23,7 +23,7 @@ The service binds to `localhost` only, so nothing is exposed externally by defau
 2. Double-click `start_monitor_service.bat` (or run `python monitor_service.py`). Dependencies install automatically the first time.
 3. Visit http://localhost:5001 and confirm the dashboard loads.
 
-## Integrating With the Hotkey Script
+## Integrating With the Gun Del Sol Script
 
 - **Register address (Ctrl + F14)**: hover a wallet, hold `Ctrl`, press F14. The address shows up in the dashboard immediately.
 - **Token analysis (F16)**: hover a token mint and press F16. A job is queued and the dashboard opens to `/analysis` once the Helius call completes.

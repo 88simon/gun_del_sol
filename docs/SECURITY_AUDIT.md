@@ -171,7 +171,7 @@ if (DEBUG) console.log('[Defined.fi Auto-Search] ...', address);
 
 ### FIX 5: Replace AHK Temp Files
 
-**solscan_hotkey.ahk lines 1225-1249 and 1335-1362:**
+**gun_del_sol.ahk lines 1225-1249 and 1335-1362:**
 
 Instead of:
 ```ahk

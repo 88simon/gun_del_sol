@@ -1,12 +1,12 @@
 @echo off
 REM ============================================================================
-REM Solana Monitoring Service Launcher
+REM Gun Del Sol API Service Launcher
 REM ============================================================================
-REM Starts the Flask monitoring service that receives address registrations
+REM Starts the Flask REST API service that receives address registrations
 REM ============================================================================
 
 set SCRIPT_DIR=%~dp0
-set PYTHON_SCRIPT=%SCRIPT_DIR%monitor_service.py
+set PYTHON_SCRIPT=%SCRIPT_DIR%api_service.py
 
 REM Check if Python is installed
 where python >nul 2>nul
@@ -22,7 +22,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 REM Check if script exists
 if not exist "%PYTHON_SCRIPT%" (
-    echo ERROR: Cannot find monitor_service.py
+    echo ERROR: Cannot find api_service.py
     echo Expected location: %PYTHON_SCRIPT%
     echo.
     pause
@@ -45,13 +45,13 @@ if %ERRORLEVEL% NEQ 0 (
     )
 )
 
-REM Start the monitoring service
+REM Start the API service
 echo.
-echo Starting Solana Monitoring Service...
+echo Starting Gun Del Sol API Service...
 echo.
 python "%PYTHON_SCRIPT%"
 
 REM If we get here, the service was stopped
 echo.
-echo Monitoring service stopped.
+echo API service stopped.
 pause

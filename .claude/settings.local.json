@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(rm:*)",
-      "Bash(mkdir:*)"
+      "Bash(mkdir:*)",
+      "Bash(move monitor_service.py api_service.py)",
+      "Bash(mv:*)"
     ],
     "deny": [],
     "ask": []

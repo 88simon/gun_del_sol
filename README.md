@@ -1,16 +1,16 @@
-# Solscan Hotkey Toolkit
+# Gun Del Sol
 
-Automate Solana wallet and token digging directly from your mouse side buttons. The toolkit couples a fast AutoHotkey script with optional browser automation and a local monitoring service.
+Automate Solana wallet and token digging directly from your mouse side buttons. The toolkit couples a fast AutoHotkey script with optional browser automation and a local monitoring service that integrates with the Solscan blockchain explorer.
 
 ## Project Layout
 
 | Path | Purpose |
 | --- | --- |
-| `solscan_hotkey.ahk` | Primary AutoHotkey script (F13, F14, F15, F16 bindings) |
-| `start_solscan_hotkey.bat` | Helper launcher for the hotkey script |
+| `gun_del_sol.ahk` | Primary AutoHotkey script (F13, F14, F15, F16 bindings) |
+| `launch_gun_del_sol.bat` | Helper launcher for the hotkey script |
 | `userscripts/defined-fi-autosearch.user.js` | Tampermonkey helper for defined.fi token lookup |
 | `monitor/` | Flask monitoring and analysis service (see `monitor/README.md`) |
-| `test_buttons.ahk`, `test_mouse_buttons.ahk` | Diagnostics for mapping mouse buttons |
+| `tools/test_mouse_buttons.ahk` | Diagnostics for mapping mouse buttons |
 
 ## Core Hotkey Actions
 
@@ -51,7 +51,7 @@ Optional components:
 
 1. Install AutoHotkey v2 from https://www.autohotkey.com/.
 2. Logitech G HUB users: map side buttons to F13 and F14. Other mice can rely on native `XButton1` and `XButton2`.
-3. Double-click `start_solscan_hotkey.bat` (or the `.ahk` file directly). Look for the green "H" tray icon.
+3. Double-click `launch_gun_del_sol.bat` (or the `.ahk` file directly). Look for the green "H" tray icon.
 4. Hover over a Solana address and press F14 or XButton2. Solscan opens with large-transfer filters already applied.
 
 ## Optional Integrations
@@ -92,7 +92,7 @@ Additional troubleshooting, API endpoints, and configuration details are in `mon
 
 ## Customization Hints
 
-- Tweak Solscan filters, notification timing, and hotkey bindings directly in `solscan_hotkey.ahk`.
+- Tweak Solscan filters, notification timing, and hotkey bindings directly in `gun_del_sol.ahk`.
 - Modify the defined.fi userscript to apply extra filters (for example a minimum USD size) once you inspect the page in DevTools.
 - Extend the monitoring service with new endpoints or schedulers; it already exposes `/analysis`, `/addresses`, and CSV exports.
 

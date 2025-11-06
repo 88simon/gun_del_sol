@@ -66,7 +66,7 @@ const DEBUG = true;  // In HTML files
 
 ## Permanent Solution (Later)
 
-When you have more time, follow the detailed fixes in [OPSEC_FIXES_NEEDED.md](OPSEC_FIXES_NEEDED.md) to:
+When you have more time, follow the detailed fixes in [SECURITY_AUDIT.md](SECURITY_AUDIT.md) to:
 - Replace all print() with proper secure_logging functions
 - Add API authentication
 - Sanitize error messages

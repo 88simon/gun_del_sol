@@ -6,7 +6,7 @@ This module stores analyzed tokens and wallet activity in SQLite.
 
 ⚠️  SECURITY WARNING - CONTAINS SENSITIVE TRADING DATA  ⚠️
 
-The database file (solscan_monitor.db) contains:
+The database file (analyzed_tokens.db) contains:
 - Wallet addresses of early buyers you discovered
 - Token analysis results revealing your research
 - Trading strategies and patterns
@@ -23,7 +23,7 @@ from datetime import datetime
 from typing import List, Dict, Optional
 from contextlib import contextmanager
 
-DATABASE_FILE = 'solscan_monitor.db'
+DATABASE_FILE = 'analyzed_tokens.db'
 
 
 @contextmanager

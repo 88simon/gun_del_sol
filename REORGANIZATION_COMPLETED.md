@@ -1,7 +1,7 @@
-# ✅ CODEBASE REORGANIZATION COMPLETED
+# Gun Del Sol - Codebase Status
 
-**Date:** 2025-11-05
-**Status:** Successfully completed all phases
+**Last Updated:** 2025-11-05
+**Project:** Gun Del Sol (Solana Analysis Tool)
 
 ---
 
@@ -45,15 +45,15 @@
 ## New File Structure
 
 ```
-solscan_hotkey/
+gun_del_sol/
 │
 ├─ README.md                          # Main project documentation
 ├─ SECURITY.md                        # Security and privacy guide (MOVED from monitor/)
 ├─ .gitignore                         # Git exclusions (sensitive data protection)
-├─ settings.ini                       # AHK configuration (auto-generated)
+├─ gun_del_sol_settings.ini           # AHK configuration (auto-generated)
 │
-├─ solscan_hotkey.ahk                 # Main AutoHotkey script
-├─ start_solscan_hotkey.ahk          # AHK launcher
+├─ gun_del_sol.ahk                    # Main AutoHotkey script
+├─ launch_gun_del_sol.bat            # Batch launcher script
 │
 ├─ docs/                              # Documentation (NEW)
 │  ├─ SECURITY_AUDIT.md              # Complete OPSEC security audit
@@ -73,9 +73,9 @@ solscan_hotkey/
    ├─ requirements.txt               # Python dependencies
    ├─ start_monitor_service.bat     # Service launcher
    │
-   ├─ monitor_service.py             # Flask REST API server
+   ├─ api_service.py                 # Flask REST API server (main module)
    ├─ helius_api.py                  # Helius blockchain API wrapper
-   ├─ analyzed_tokens_db.py          # SQLite database interface (RENAMED)
+   ├─ analyzed_tokens_db.py          # SQLite database interface
    ├─ secure_logging.py              # OPSEC-safe logging module
    ├─ debug_config.py                # Centralized debug mode killswitch
    │
