@@ -137,13 +137,23 @@ class HeliusAPI:
 
         return None
 
-    def get_parsed_transactions(self, address: str, limit: int = 100) -> List[Dict]:
+    def get_parsed_transactions(self, address: str, limit: int = 100, get_earliest: bool = False) -> List[Dict]:
         """
         Get parsed transaction history for an address.
         Returns transactions with decoded swap/transfer data.
+
+        Args:
+            address: Solana address to fetch transactions for
+            limit: Maximum number of transactions to fetch
+            get_earliest: If True, fetches earliest transactions from token creation.
+                         If False, fetches most recent transactions (default)
         """
         try:
-            # Get transaction signatures first
+            if get_earliest:
+                # Fetch earliest transactions by paginating from the beginning
+                return self._get_earliest_transactions(address, limit)
+
+            # Get transaction signatures first (most recent by default)
             signatures = self._rpc_call('getSignaturesForAddress', [
                 address,
                 {"limit": limit}
@@ -188,6 +198,101 @@ class HeliusAPI:
 
         except Exception as e:
             print(f"Error fetching parsed transactions: {str(e)}")
+            return []
+
+    def _get_earliest_transactions(self, address: str, limit: int = 500) -> List[Dict]:
+        """
+        Fetch earliest transactions for an address by paginating backwards.
+
+        Solana's getSignaturesForAddress returns transactions newest-first.
+        To get earliest transactions, we need to:
+        1. Paginate backwards until we find all transactions
+        2. Reverse the order to get oldest-first
+        3. Return the first 'limit' transactions
+
+        Args:
+            address: Solana address to fetch transactions for
+            limit: Maximum number of earliest transactions to return
+
+        Returns:
+            List of parsed transactions, oldest first
+        """
+        print(f"[Helius] Fetching earliest transactions by paginating backwards...")
+
+        all_signatures = []
+        batch_size = 1000  # Max allowed by Solana RPC
+        before_signature = None
+        total_fetched = 0
+
+        try:
+            # Paginate backwards to get all transaction signatures
+            while True:
+                params = [address, {"limit": batch_size}]
+                if before_signature:
+                    params[1]["before"] = before_signature
+
+                # Fetch batch of signatures
+                signatures = self._rpc_call('getSignaturesForAddress', params)
+
+                if not signatures:
+                    break
+
+                all_signatures.extend(signatures)
+                total_fetched += len(signatures)
+
+                print(f"[Helius] Fetched {total_fetched} signatures so far...")
+
+                # If we got fewer than batch_size, we've reached the beginning
+                if len(signatures) < batch_size:
+                    break
+
+                # Use the last signature as the 'before' cursor for next batch
+                before_signature = signatures[-1]['signature']
+
+                # Safety limit: don't fetch more than 10,000 signatures total
+                if total_fetched >= 10000:
+                    print(f"[Helius] Reached safety limit of 10,000 signatures")
+                    break
+
+            print(f"[Helius] Total signatures fetched: {total_fetched}")
+
+            # Reverse to get oldest-first, then take the first 'limit' transactions
+            all_signatures.reverse()
+            earliest_signatures = all_signatures[:limit]
+
+            print(f"[Helius] Processing {len(earliest_signatures)} earliest signatures...")
+
+            # Now fetch full transaction data for these earliest signatures
+            all_transactions = []
+
+            for i, sig_obj in enumerate(earliest_signatures):
+                if i % 50 == 0:
+                    print(f"[Helius] Progress: {i}/{len(earliest_signatures)} earliest transactions fetched...")
+
+                try:
+                    signature = sig_obj['signature']
+                    tx_data = self._rpc_call('getTransaction', [
+                        signature,
+                        {
+                            "encoding": "jsonParsed",
+                            "maxSupportedTransactionVersion": 0
+                        }
+                    ])
+
+                    if tx_data:
+                        parsed_tx = self._parse_rpc_transaction(tx_data, signature)
+                        if parsed_tx:
+                            all_transactions.append(parsed_tx)
+
+                except Exception as tx_error:
+                    # Skip individual transaction errors
+                    continue
+
+            print(f"[Helius] Successfully retrieved {len(all_transactions)} earliest transactions")
+            return all_transactions
+
+        except Exception as e:
+            print(f"Error fetching earliest transactions: {str(e)}")
             return []
 
     def _parse_rpc_transaction(self, tx_data: dict, signature: str) -> dict:
@@ -339,10 +444,10 @@ class HeliusAPI:
         else:
             print(f"[Helius] Token info: Unknown (metadata not available)")
 
-        # Get transaction history
-        print(f"[Helius] Fetching up to {max_transactions} transactions...")
-        transactions = self.get_parsed_transactions(mint_address, limit=max_transactions)
-        print(f"[Helius] Retrieved {len(transactions)} transactions")
+        # Get transaction history - ALWAYS fetch earliest transactions for early bidder analysis
+        print(f"[Helius] Fetching up to {max_transactions} EARLIEST transactions...")
+        transactions = self.get_parsed_transactions(mint_address, limit=max_transactions, get_earliest=True)
+        print(f"[Helius] Retrieved {len(transactions)} earliest transactions")
 
         if not transactions:
             return {
@@ -355,8 +460,9 @@ class HeliusAPI:
             }
 
         # Find first transaction timestamp
+        # Transactions are already in chronological order (oldest first)
         first_tx_time = None
-        for tx in reversed(transactions):  # Oldest first
+        for tx in transactions:
             if tx.get('timestamp'):
                 first_tx_time = datetime.fromtimestamp(tx['timestamp'])
                 break

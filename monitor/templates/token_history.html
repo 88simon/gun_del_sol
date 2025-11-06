@@ -377,7 +377,9 @@
                 document.getElementById('total-wallets').textContent = data.total_wallets || 0;
 
                 if (tokens.length > 0) {
-                    const latestDate = new Date(tokens[0].analysis_timestamp);
+                    // Convert UTC to local time
+                    const latestTimestamp = tokens[0].analysis_timestamp.replace(' ', 'T') + 'Z';
+                    const latestDate = new Date(latestTimestamp);
                     document.getElementById('latest-analysis').textContent =
                         latestDate.toLocaleDateString() + ' ' + latestDate.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
                 } else {
@@ -432,8 +434,16 @@
             `;
 
             filtered.forEach(token => {
-                const analysisDate = new Date(token.analysis_timestamp);
-                const firstBuyDate = token.first_buy_timestamp ? new Date(token.first_buy_timestamp) : null;
+                // Convert UTC timestamps to local time
+                // SQLite CURRENT_TIMESTAMP returns UTC without 'Z', so we append it
+                const analysisTimestamp = token.analysis_timestamp.replace(' ', 'T') + 'Z';
+                const analysisDate = new Date(analysisTimestamp);
+
+                let firstBuyDate = null;
+                if (token.first_buy_timestamp) {
+                    const firstBuyTimestamp = token.first_buy_timestamp.replace(' ', 'T') + 'Z';
+                    firstBuyDate = new Date(firstBuyTimestamp);
+                }
 
                 html += `
                     <tr>
@@ -499,7 +509,9 @@
 
                 if (data.wallets && data.wallets.length > 0) {
                     data.wallets.forEach((wallet, index) => {
-                        const firstBuyDate = new Date(wallet.first_buy_timestamp);
+                        // Convert UTC timestamp to local time
+                        const firstBuyTimestamp = wallet.first_buy_timestamp.replace(' ', 'T') + 'Z';
+                        const firstBuyDate = new Date(firstBuyTimestamp);
                         const totalUsd = wallet.total_usd ? `$${Math.round(wallet.total_usd)}` : 'N/A';
                         const avgUsd = wallet.average_buy_usd ? `$${Math.round(wallet.average_buy_usd)}` : 'N/A';
 
@@ -556,7 +568,7 @@
                                 </div>
                                 <div>
                                     <strong style="color: #4a5568;">Analyzed:</strong>
-                                    <div style="color: #718096; font-size: 12px; margin-top: 5px;">${new Date(data.analysis_timestamp).toLocaleString()}</div>
+                                    <div style="color: #718096; font-size: 12px; margin-top: 5px;">${new Date(data.analysis_timestamp.replace(' ', 'T') + 'Z').toLocaleString()}</div>
                                 </div>
                             </div>
 
