@@ -58,7 +58,8 @@ def init_database():
                 first_buy_timestamp TIMESTAMP,
                 wallets_found INTEGER DEFAULT 0,
                 axiom_json TEXT,
-                webhook_id TEXT
+                webhook_id TEXT,
+                credits_used INTEGER DEFAULT 0
             )
         ''')
 
@@ -113,21 +114,29 @@ def init_database():
         ''')
 
         # Run migrations to add new columns to existing tables
-        # Check if total_usd column exists, if not add it
+        # Check if total_usd column exists in early_buyer_wallets, if not add it
         cursor.execute("PRAGMA table_info(early_buyer_wallets)")
-        columns = [col[1] for col in cursor.fetchall()]
+        ebw_columns = [col[1] for col in cursor.fetchall()]
 
-        if 'total_usd' not in columns:
+        if 'total_usd' not in ebw_columns:
             print("[Database] Migrating: Adding total_usd column...")
             cursor.execute('ALTER TABLE early_buyer_wallets ADD COLUMN total_usd REAL')
 
-        if 'transaction_count' not in columns:
+        if 'transaction_count' not in ebw_columns:
             print("[Database] Migrating: Adding transaction_count column...")
             cursor.execute('ALTER TABLE early_buyer_wallets ADD COLUMN transaction_count INTEGER')
 
-        if 'average_buy_usd' not in columns:
+        if 'average_buy_usd' not in ebw_columns:
             print("[Database] Migrating: Adding average_buy_usd column...")
             cursor.execute('ALTER TABLE early_buyer_wallets ADD COLUMN average_buy_usd REAL')
+
+        # Check if credits_used column exists in analyzed_tokens, if not add it
+        cursor.execute("PRAGMA table_info(analyzed_tokens)")
+        at_columns = [col[1] for col in cursor.fetchall()]
+
+        if 'credits_used' not in at_columns:
+            print("[Database] Migrating: Adding credits_used column...")
+            cursor.execute('ALTER TABLE analyzed_tokens ADD COLUMN credits_used INTEGER DEFAULT 0')
 
         print("[Database] Schema initialized successfully")
 
@@ -139,10 +148,21 @@ def save_analyzed_token(
     acronym: str,
     early_bidders: List[Dict],
     axiom_json: List[Dict],
-    first_buy_timestamp: Optional[str] = None
+    first_buy_timestamp: Optional[str] = None,
+    credits_used: int = 0
 ) -> int:
     """
     Save analyzed token and its early buyers.
+
+    Args:
+        token_address: Solana token mint address
+        token_name: Token name
+        token_symbol: Token symbol
+        acronym: Generated acronym
+        early_bidders: List of early buyer wallet data
+        axiom_json: Axiom wallet tracker export JSON
+        first_buy_timestamp: Timestamp of first buy transaction
+        credits_used: Helius API credits used for this analysis
 
     Returns:
         token_id: Database ID of the saved token
@@ -154,8 +174,8 @@ def save_analyzed_token(
         cursor.execute('''
             INSERT INTO analyzed_tokens (
                 token_address, token_name, token_symbol, acronym,
-                first_buy_timestamp, wallets_found, axiom_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                first_buy_timestamp, wallets_found, axiom_json, credits_used
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(token_address) DO UPDATE SET
                 token_name = excluded.token_name,
                 token_symbol = excluded.token_symbol,
@@ -163,7 +183,8 @@ def save_analyzed_token(
                 analysis_timestamp = CURRENT_TIMESTAMP,
                 first_buy_timestamp = excluded.first_buy_timestamp,
                 wallets_found = excluded.wallets_found,
-                axiom_json = excluded.axiom_json
+                axiom_json = excluded.axiom_json,
+                credits_used = excluded.credits_used
         ''', (
             token_address,
             token_name,
@@ -171,7 +192,8 @@ def save_analyzed_token(
             acronym,
             first_buy_timestamp,
             len(early_bidders),
-            json.dumps(axiom_json)
+            json.dumps(axiom_json),
+            credits_used
         ))
 
         # Get the token ID
@@ -218,7 +240,7 @@ def get_analyzed_tokens(limit: int = 50) -> List[Dict]:
         cursor.execute('''
             SELECT
                 id, token_address, token_name, token_symbol, acronym,
-                analysis_timestamp, first_buy_timestamp, wallets_found
+                analysis_timestamp, first_buy_timestamp, wallets_found, credits_used
             FROM analyzed_tokens
             ORDER BY analysis_timestamp DESC
             LIMIT ?

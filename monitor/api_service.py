@@ -11,6 +11,7 @@ Version: 1.0 (Phase 1 - MVP)
 """
 
 from flask import Flask, request, jsonify, render_template, send_file
+from flask_cors import CORS
 from datetime import datetime
 import json
 import os
@@ -42,6 +43,8 @@ print = safe_print
 # ============================================================================
 
 app = Flask(__name__)
+# Enable CORS for Next.js frontend on localhost:3000
+CORS(app, resources={r"/*": {"origins": "http://localhost:3000"}})
 
 # Configuration
 DATA_FILE = "monitored_addresses.json"
@@ -399,7 +402,8 @@ def run_token_analysis(job_id, token_address, min_usd, time_window_hours):
                 acronym=acronym,
                 early_bidders=result.get('early_bidders', []),
                 axiom_json=axiom_export,
-                first_buy_timestamp=result.get('first_transaction_time')
+                first_buy_timestamp=result.get('first_transaction_time'),
+                credits_used=result.get('api_credits_used', 0)
             )
             print(f"[Job {job_id}] Saved to database (ID: {token_id})")
         except Exception as db_error:

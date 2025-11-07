@@ -4,7 +4,22 @@
       "Bash(rm:*)",
       "Bash(mkdir:*)",
       "Bash(move monitor_service.py api_service.py)",
-      "Bash(mv:*)"
+      "Bash(mv:*)",
+      "Bash(git clone:*)",
+      "Bash(tree:*)",
+      "Bash(test:*)",
+      "Bash(cat:*)",
+      "Bash(npm run dev:*)",
+      "Bash(curl:*)",
+      "Bash(pip install:*)",
+      "Bash(tasklist:*)",
+      "Bash(findstr:*)",
+      "Bash(netstat:*)",
+      "Bash(python -m pip install:*)",
+      "Bash(where:*)",
+      "Bash(C:UserssimonAppDataLocalProgramsPythonPython313python.exe -m pip install flask-cors)",
+      "Bash(\"/c/Users/simon/AppData/Local/Programs/Python/Python313/python.exe\" -m pip install flask-cors)",
+      "Bash(python:*)"
     ],
     "deny": [],
     "ask": []

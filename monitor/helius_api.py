@@ -34,6 +34,7 @@ class HeliusAPI:
         self.enhanced_url = "https://api.helius.xyz/v0"
         self.session = requests.Session()
         self.session.headers.update({'Content-Type': 'application/json'})
+        self.api_credits_used = 0  # Track API credits used
 
     def is_wallet_on_curve(self, wallet_address: str) -> bool:
         """
@@ -547,6 +548,15 @@ class HeliusAPI:
 
         print(f"[Helius] Found {len(early_bidders)} early bidders (>${min_usd} USD)")
 
+        # Estimate API credits used
+        # 1-2 credits for metadata calls + signature pagination credits + transaction fetch credits
+        signature_pagination_calls = max(1, (len(transactions) // 1000) + 1)  # Paginated at 1000 per batch
+        metadata_calls = 2  # token-metadata + potential DAS API fallback
+        transaction_calls = len(transactions)  # 1 credit per transaction fetched
+        estimated_credits = metadata_calls + signature_pagination_calls + transaction_calls
+
+        print(f"[Helius] Estimated API credits used: {estimated_credits}")
+
         return {
             'token_address': mint_address,
             'token_info': token_info,
@@ -554,7 +564,8 @@ class HeliusAPI:
             'analysis_window_end': window_end.isoformat(),
             'early_bidders': early_bidders,
             'total_unique_buyers': len(early_bidders),
-            'total_transactions_analyzed': len(transactions)
+            'total_transactions_analyzed': len(transactions),
+            'api_credits_used': estimated_credits
         }
 
     def _extract_buy_info(self, tx: dict, mint_address: str, debug_first: bool = False) -> tuple:
@@ -738,6 +749,7 @@ class TokenAnalyzer:
 
     def __init__(self, api_key: str):
         self.helius = HeliusAPI(api_key)
+        self.api_credits_used = 0  # Track API credits used during analysis
 
     def analyze_token(
         self,

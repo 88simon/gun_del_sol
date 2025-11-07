@@ -434,6 +434,7 @@
                             <th>Address</th>
                             <th>Acronym</th>
                             <th>Wallets</th>
+                            <th>Credits</th>
                             <th>First Buy</th>
                             <th>Analyzed</th>
                             <th>Actions</th>
@@ -471,6 +472,9 @@
                         </td>
                         <td>
                             <span class="wallets-badge">${token.wallets_found} wallets</span>
+                        </td>
+                        <td style="font-weight: 600; color: #f59e0b;">
+                            ${token.credits_used || 0}
                         </td>
                         <td class="timestamp">
                             ${firstBuyDate ? firstBuyDate.toLocaleString() : '-'}

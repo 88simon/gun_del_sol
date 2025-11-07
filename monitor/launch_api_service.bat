@@ -29,7 +29,7 @@ if not exist "%PYTHON_SCRIPT%" (
     exit /b 1
 )
 
-REM Check if Flask is installed
+REM Check if Flask and flask-cors are installed
 python -c "import flask" 2>nul
 if %ERRORLEVEL% NEQ 0 (
     echo Flask is not installed. Installing dependencies...
@@ -37,11 +37,29 @@ if %ERRORLEVEL% NEQ 0 (
     python -m pip install -r "%SCRIPT_DIR%requirements.txt"
     if %ERRORLEVEL% NEQ 0 (
         echo.
-        echo ERROR: Failed to install Flask
-        echo Please manually run: pip install flask
+        echo ERROR: Failed to install dependencies
+        echo Please manually run: pip install -r requirements.txt
         echo.
         pause
         exit /b 1
+    )
+)
+
+python -c "import flask_cors" 2>nul
+if %ERRORLEVEL% NEQ 0 (
+    echo flask-cors is not installed. Installing dependencies...
+    echo.
+    python -m pip install -r "%SCRIPT_DIR%requirements.txt"
+    if %ERRORLEVEL% NEQ 0 (
+        echo.
+        echo ERROR: Failed to install flask-cors
+        echo Please manually run: pip install flask-cors
+        echo.
+        pause
+        exit /b 1
+    ) else (
+        echo Dependencies installed successfully.
+        echo.
     )
 )
 
