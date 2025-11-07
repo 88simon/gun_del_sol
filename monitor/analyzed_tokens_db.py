@@ -59,7 +59,8 @@ def init_database():
                 wallets_found INTEGER DEFAULT 0,
                 axiom_json TEXT,
                 webhook_id TEXT,
-                credits_used INTEGER DEFAULT 0
+                credits_used INTEGER DEFAULT 0,
+                last_analysis_credits INTEGER DEFAULT 0
             )
         ''')
 
@@ -130,13 +131,17 @@ def init_database():
             print("[Database] Migrating: Adding average_buy_usd column...")
             cursor.execute('ALTER TABLE early_buyer_wallets ADD COLUMN average_buy_usd REAL')
 
-        # Check if credits_used column exists in analyzed_tokens, if not add it
+        # Check if credits_used and last_analysis_credits columns exist in analyzed_tokens, if not add them
         cursor.execute("PRAGMA table_info(analyzed_tokens)")
         at_columns = [col[1] for col in cursor.fetchall()]
 
         if 'credits_used' not in at_columns:
             print("[Database] Migrating: Adding credits_used column...")
             cursor.execute('ALTER TABLE analyzed_tokens ADD COLUMN credits_used INTEGER DEFAULT 0')
+
+        if 'last_analysis_credits' not in at_columns:
+            print("[Database] Migrating: Adding last_analysis_credits column...")
+            cursor.execute('ALTER TABLE analyzed_tokens ADD COLUMN last_analysis_credits INTEGER DEFAULT 0')
 
         print("[Database] Schema initialized successfully")
 
@@ -174,8 +179,8 @@ def save_analyzed_token(
         cursor.execute('''
             INSERT INTO analyzed_tokens (
                 token_address, token_name, token_symbol, acronym,
-                first_buy_timestamp, wallets_found, axiom_json, credits_used
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                first_buy_timestamp, wallets_found, axiom_json, credits_used, last_analysis_credits
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(token_address) DO UPDATE SET
                 token_name = excluded.token_name,
                 token_symbol = excluded.token_symbol,
@@ -184,7 +189,8 @@ def save_analyzed_token(
                 first_buy_timestamp = excluded.first_buy_timestamp,
                 wallets_found = excluded.wallets_found,
                 axiom_json = excluded.axiom_json,
-                credits_used = excluded.credits_used
+                credits_used = analyzed_tokens.credits_used + excluded.credits_used,
+                last_analysis_credits = excluded.last_analysis_credits
         ''', (
             token_address,
             token_name,
@@ -193,6 +199,7 @@ def save_analyzed_token(
             first_buy_timestamp,
             len(early_bidders),
             json.dumps(axiom_json),
+            credits_used,
             credits_used
         ))
 
@@ -240,7 +247,7 @@ def get_analyzed_tokens(limit: int = 50) -> List[Dict]:
         cursor.execute('''
             SELECT
                 id, token_address, token_name, token_symbol, acronym,
-                analysis_timestamp, first_buy_timestamp, wallets_found, credits_used
+                analysis_timestamp, first_buy_timestamp, wallets_found, credits_used, last_analysis_credits
             FROM analyzed_tokens
             ORDER BY analysis_timestamp DESC
             LIMIT ?

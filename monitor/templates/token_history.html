@@ -432,12 +432,13 @@
                         <tr>
                             <th>Token</th>
                             <th>Address</th>
+                            <th>Actions</th>
                             <th>Acronym</th>
                             <th>Wallets</th>
-                            <th>Credits</th>
+                            <th>Report Credits</th>
+                            <th>Total Credits</th>
                             <th>First Buy</th>
                             <th>Analyzed</th>
-                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -468,21 +469,6 @@
                             </a>
                         </td>
                         <td>
-                            <span class="acronym-badge">${token.acronym}</span>
-                        </td>
-                        <td>
-                            <span class="wallets-badge">${token.wallets_found} wallets</span>
-                        </td>
-                        <td style="font-weight: 600; color: #f59e0b;">
-                            ${token.credits_used || 0}
-                        </td>
-                        <td class="timestamp">
-                            ${firstBuyDate ? firstBuyDate.toLocaleString() : '-'}
-                        </td>
-                        <td class="timestamp">
-                            ${analysisDate.toLocaleString()}
-                        </td>
-                        <td>
                             <button class="action-btn btn-primary" onclick="viewDetails(${token.id})">
                                 📋 Details
                             </button>
@@ -492,6 +478,24 @@
                             <button class="action-btn btn-danger" onclick="deleteToken(${token.id}, '${token.token_name || 'Unknown'}')">
                                 🗑️ Delete
                             </button>
+                        </td>
+                        <td>
+                            <span class="acronym-badge">${token.acronym}</span>
+                        </td>
+                        <td>
+                            <span class="wallets-badge">${token.wallets_found} wallets</span>
+                        </td>
+                        <td style="font-weight: 600; color: #48bb78;">
+                            ${token.last_analysis_credits || 0}
+                        </td>
+                        <td style="font-weight: 600; color: #f59e0b;">
+                            ${token.credits_used || 0}
+                        </td>
+                        <td class="timestamp">
+                            ${firstBuyDate ? firstBuyDate.toLocaleString() : '-'}
+                        </td>
+                        <td class="timestamp">
+                            ${analysisDate.toLocaleString()}
                         </td>
                     </tr>
                 `;
