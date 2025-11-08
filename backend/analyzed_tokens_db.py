@@ -19,11 +19,14 @@ The database files are protected by .gitignore.
 
 import sqlite3
 import json
+import os
 from datetime import datetime
 from typing import List, Dict, Optional
 from contextlib import contextmanager
 
-DATABASE_FILE = 'analyzed_tokens.db'
+# Use absolute path to ensure database is always in the backend directory
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DATABASE_FILE = os.path.join(SCRIPT_DIR, 'analyzed_tokens.db')
 
 
 @contextmanager

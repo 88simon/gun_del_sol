@@ -614,11 +614,39 @@ def download_axiom_export(job_id):
 
 @app.route('/analysis', methods=['GET'])
 def list_analyses():
-    """List all analysis jobs"""
-    return jsonify({
-        'total': len(analysis_jobs),
-        'jobs': list(analysis_jobs.values())
-    }), 200
+    """List all analysis jobs from database"""
+    try:
+        # Get all analyzed tokens from database
+        tokens = db.get_analyzed_tokens(limit=100)
+
+        # Format as analysis jobs for compatibility with frontend
+        jobs = []
+        for token in tokens:
+            jobs.append({
+                'job_id': str(token['id']),
+                'status': 'completed',
+                'token_address': token['token_address'],
+                'token_name': token['token_name'],
+                'token_symbol': token['token_symbol'],
+                'acronym': token['acronym'],
+                'wallets_found': token['wallets_found'],
+                'timestamp': token['analysis_timestamp'],
+                'credits_used': token.get('last_analysis_credits', 0),
+                'results_url': f'/analysis/{token["id"]}'
+            })
+
+        # Also include in-memory jobs (currently running)
+        for job_id, job_data in analysis_jobs.items():
+            if job_data.get('status') != 'completed':
+                jobs.insert(0, job_data)  # Add running jobs at the top
+
+        return jsonify({
+            'total': len(jobs),
+            'jobs': jobs
+        }), 200
+    except Exception as e:
+        log_error(f"Failed to list analyses: {e}")
+        return jsonify({'error': str(e)}), 500
 
 
 # ============================================================================
