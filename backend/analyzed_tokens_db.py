@@ -501,5 +501,35 @@ def delete_analyzed_token(token_id: int) -> bool:
         return True
 
 
+def search_tokens(query: str) -> List[Dict]:
+    """
+    Search tokens by token address or wallet address.
+    Returns list of tokens that match the search.
+    """
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        search_pattern = f'%{query}%'
+
+        # Search by token address or find tokens that have wallets matching the query
+        cursor.execute('''
+            SELECT DISTINCT
+                at.id, at.token_address, at.token_name, at.token_symbol, at.acronym,
+                at.analysis_timestamp, at.first_buy_timestamp, at.wallets_found,
+                at.credits_used, at.last_analysis_credits
+            FROM analyzed_tokens at
+            LEFT JOIN early_buyer_wallets ebw ON at.id = ebw.token_id
+            WHERE at.token_address LIKE ?
+               OR ebw.wallet_address LIKE ?
+            ORDER BY at.analysis_timestamp DESC
+        ''', (search_pattern, search_pattern))
+
+        tokens = []
+        for row in cursor.fetchall():
+            tokens.append(dict(row))
+
+        return tokens
+
+
 # Initialize database on module import
 init_database()

@@ -616,8 +616,15 @@ def download_axiom_export(job_id):
 def list_analyses():
     """List all analysis jobs from database"""
     try:
-        # Get all analyzed tokens from database
-        tokens = db.get_analyzed_tokens(limit=100)
+        # Check if search query is provided
+        search_query = request.args.get('search', '').strip()
+
+        if search_query:
+            # Search by token or wallet address
+            tokens = db.search_tokens(search_query)
+        else:
+            # Get all analyzed tokens from database
+            tokens = db.get_analyzed_tokens(limit=100)
 
         # Format as analysis jobs for compatibility with frontend
         jobs = []
@@ -635,10 +642,11 @@ def list_analyses():
                 'results_url': f'/analysis/{token["id"]}'
             })
 
-        # Also include in-memory jobs (currently running)
-        for job_id, job_data in analysis_jobs.items():
-            if job_data.get('status') != 'completed':
-                jobs.insert(0, job_data)  # Add running jobs at the top
+        # Also include in-memory jobs (currently running) only if not searching
+        if not search_query:
+            for job_id, job_data in analysis_jobs.items():
+                if job_data.get('status') != 'completed':
+                    jobs.insert(0, job_data)  # Add running jobs at the top
 
         return jsonify({
             'total': len(jobs),
