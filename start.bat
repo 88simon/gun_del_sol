@@ -1,4 +1,5 @@
 @echo off
+title Gun Del Sol - Launcher
 REM ============================================================================
 REM Gun Del Sol - Master Launcher
 REM ============================================================================
@@ -36,7 +37,7 @@ echo.
 REM Launch Frontend
 echo [3/3] Starting frontend...
 if exist "%~dp0..\gun-del-sol-web\launch_web.bat" (
-    start "Gun Del Sol - Frontend" /D "%~dp0..\gun-del-sol-web" cmd /k launch_web.bat
+    start "Gun Del Sol - Frontend" /D "%~dp0..\gun-del-sol-web" cmd /k "title Gun Del Sol - Frontend && launch_web.bat"
     echo       Started: Frontend ^(localhost:3000^)
 ) else (
     echo       WARNING: ..\gun-del-sol-web\launch_web.bat not found
