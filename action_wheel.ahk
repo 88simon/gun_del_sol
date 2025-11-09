@@ -1330,17 +1330,37 @@ HandleTokenAnalysis() {
 AnalyzeTokenWithService(tokenAddress) {
     ; Fetch current API settings from backend
     settingsUrl := "http://localhost:5001/api/settings"
-    settingsCommand := 'curl -s "' . settingsUrl . '" 2>&1'
 
+    ; Default settings (fallback)
     apiSettings := '{"transactionLimit":500,"minUsdFilter":50,"maxWalletsToStore":10,"apiRateDelay":100,"maxCreditsPerAnalysis":1000,"maxRetries":3}'
 
+    ; Try to fetch settings using RunWait (more reliable than Exec)
     try {
-        settingsResult := ComObjCreate("WScript.Shell").Exec('cmd /c ' . settingsCommand).StdOut.ReadAll()
-        if (settingsResult != "" && InStr(settingsResult, "{")) {
-            apiSettings := settingsResult
+        tempFile := A_Temp . "\api_settings.json"
+        ; Delete temp file if it exists
+        if FileExist(tempFile) {
+            FileDelete(tempFile)
         }
-    } catch {
+
+        ; Use RunWait to fetch settings to temp file
+        RunWait('curl -s "' . settingsUrl . '" -o "' . tempFile . '"', , "Hide")
+
+        ; Read the temp file
+        if FileExist(tempFile) {
+            settingsResult := FileRead(tempFile)
+            if (settingsResult != "" && InStr(settingsResult, "{")) {
+                apiSettings := settingsResult
+                ; Show a quick notification that settings were loaded
+                ToolTip "Settings loaded from backend"
+                SetTimer () => ToolTip(), -500
+            }
+            FileDelete(tempFile)
+        }
+    } catch as err {
         ; Use defaults if can't fetch settings
+        ; (silent fallback - this is okay)
+        ToolTip "Using default settings (backend offline?)"
+        SetTimer () => ToolTip(), -1000
     }
 
     ; Build JSON payload with API settings

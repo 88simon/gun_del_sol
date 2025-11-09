@@ -491,6 +491,10 @@ def analyze_token():
         # Note: apiRateDelay, maxCreditsPerAnalysis, maxRetries are stored but not yet used in analysis
         # These will be implemented in future iterations
 
+        # DEBUG: Log what settings were received from AutoHotkey
+        print(f"[DEBUG] Received api_settings from request: {api_settings}")
+        print(f"[DEBUG] Parsed transaction_limit: {transaction_limit}")
+
         # For backwards compatibility, also accept old parameter names
         if 'min_usd' in data:
             min_usd = float(data.get('min_usd'))
@@ -1163,8 +1167,8 @@ def get_debug_config():
 # API Settings Management
 # ============================================================================
 
-# Global API settings (persisted in memory, can be saved to file later)
-current_api_settings = {
+# Default API settings
+DEFAULT_API_SETTINGS = {
     "transactionLimit": 500,
     "minUsdFilter": 50,
     "maxWalletsToStore": 10,
@@ -1172,6 +1176,37 @@ current_api_settings = {
     "maxCreditsPerAnalysis": 1000,
     "maxRetries": 3
 }
+
+# Settings file path
+SETTINGS_FILE = os.path.join(os.path.dirname(__file__), 'api_settings.json')
+
+# Load settings from file or use defaults
+def load_api_settings():
+    """Load API settings from file, or return defaults if file doesn't exist"""
+    if os.path.exists(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE, 'r') as f:
+                settings = json.load(f)
+                print(f"[OK] Loaded API settings from {SETTINGS_FILE}: {settings}")
+                return settings
+        except Exception as e:
+            print(f"[WARN] Failed to load settings from {SETTINGS_FILE}: {e}")
+            return DEFAULT_API_SETTINGS.copy()
+    return DEFAULT_API_SETTINGS.copy()
+
+def save_api_settings(settings):
+    """Save API settings to file"""
+    try:
+        with open(SETTINGS_FILE, 'w') as f:
+            json.dump(settings, f, indent=2)
+        print(f"[OK] Saved API settings to {SETTINGS_FILE}")
+        return True
+    except Exception as e:
+        print(f"[WARN] Failed to save settings to {SETTINGS_FILE}: {e}")
+        return False
+
+# Global API settings (persisted to file)
+current_api_settings = load_api_settings()
 
 @app.route('/api/settings', methods=['GET'])
 def get_api_settings():
@@ -1203,6 +1238,9 @@ def update_api_settings():
             current_api_settings['maxRetries'] = int(data['maxRetries'])
 
         print(f"[OK] Updated API settings: {current_api_settings}")
+
+        # Save to file for persistence across backend restarts
+        save_api_settings(current_api_settings)
 
         return jsonify({
             "status": "success",
