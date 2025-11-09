@@ -949,7 +949,8 @@ class TokenAnalyzer:
         self,
         mint_address: str,
         min_usd: float = 50.0,
-        time_window_hours: int = 999999
+        time_window_hours: int = 999999,
+        max_transactions: int = 500
     ) -> Dict:
         """
         Analyze a token to find early bidders.
@@ -958,6 +959,7 @@ class TokenAnalyzer:
             mint_address: Token mint address
             min_usd: Minimum USD threshold (default: $50)
             time_window_hours: Analysis window in hours (default: 999999, effectively unlimited)
+            max_transactions: Maximum transactions to analyze (default: 500)
 
         Returns:
             Analysis results dictionary
@@ -965,7 +967,8 @@ class TokenAnalyzer:
         return self.helius.analyze_token_early_bidders(
             mint_address=mint_address,
             min_usd=min_usd,
-            time_window_hours=time_window_hours
+            time_window_hours=time_window_hours,
+            max_transactions=max_transactions
         )
 
 

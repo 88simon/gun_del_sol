@@ -1328,8 +1328,23 @@ HandleTokenAnalysis() {
 }
 
 AnalyzeTokenWithService(tokenAddress) {
-    ; Build JSON payload
-    jsonData := '{"address":"' . tokenAddress . '","min_usd":50,"time_window_hours":24}'
+    ; Fetch current API settings from backend
+    settingsUrl := "http://localhost:5001/api/settings"
+    settingsCommand := 'curl -s "' . settingsUrl . '" 2>&1'
+
+    apiSettings := '{"transactionLimit":500,"minUsdFilter":50,"maxWalletsToStore":10,"apiRateDelay":100,"maxCreditsPerAnalysis":1000,"maxRetries":3}'
+
+    try {
+        settingsResult := ComObjCreate("WScript.Shell").Exec('cmd /c ' . settingsCommand).StdOut.ReadAll()
+        if (settingsResult != "" && InStr(settingsResult, "{")) {
+            apiSettings := settingsResult
+        }
+    } catch {
+        ; Use defaults if can't fetch settings
+    }
+
+    ; Build JSON payload with API settings
+    jsonData := '{"address":"' . tokenAddress . '","api_settings":' . apiSettings . '}'
 
     ; Create temporary file for curl
     tempFile := A_Temp . "\solscan_analyze.json"

@@ -332,18 +332,20 @@ def clear_all():
 # Token Analysis Endpoints
 # ============================================================================
 
-def run_token_analysis(job_id, token_address, min_usd, time_window_hours):
+def run_token_analysis(job_id, token_address, min_usd, time_window_hours, max_transactions=500):
     """Background worker function to analyze a token"""
     try:
         print(f"[Job {job_id}] === ANALYSIS STARTED (NEW CODE v7 - ON-CURVE FILTERING) ===")
         print(f"[Job {job_id}] Starting analysis for {token_address}")
+        print(f"[Job {job_id}] Settings: min_usd=${min_usd}, time_window={time_window_hours}h, max_transactions={max_transactions}")
         analysis_jobs[job_id]['status'] = 'processing'
 
         analyzer = TokenAnalyzer(HELIUS_API_KEY)
         result = analyzer.analyze_token(
             mint_address=token_address,
             min_usd=min_usd,
-            time_window_hours=time_window_hours
+            time_window_hours=time_window_hours,
+            max_transactions=max_transactions
         )
 
         # Extract token info with proper null handling
@@ -456,8 +458,14 @@ def analyze_token():
     Expected JSON payload:
     {
         "address": "TokenMintAddress...",
-        "min_usd": 50,  # optional, default 50
-        "time_window_hours": 999999  # optional, default 999999 (effectively unlimited)
+        "api_settings": {  # optional - API request settings from frontend
+            "transactionLimit": 500,
+            "minUsdFilter": 50,
+            "maxWalletsToStore": 10,
+            "apiRateDelay": 100,
+            "maxCreditsPerAnalysis": 1000,
+            "maxRetries": 3
+        }
     }
     """
     if not helius_enabled:
@@ -475,8 +483,17 @@ def analyze_token():
         if not is_valid_solana_address(token_address):
             return jsonify({"error": "Invalid Solana address format"}), 400
 
-        # Get analysis parameters
-        min_usd = float(data.get('min_usd', 50))
+        # Get API settings from frontend (with defaults)
+        api_settings = data.get('api_settings', {})
+        transaction_limit = int(api_settings.get('transactionLimit', 500))
+        min_usd = float(api_settings.get('minUsdFilter', 50))
+        max_wallets = int(api_settings.get('maxWalletsToStore', 10))
+        # Note: apiRateDelay, maxCreditsPerAnalysis, maxRetries are stored but not yet used in analysis
+        # These will be implemented in future iterations
+
+        # For backwards compatibility, also accept old parameter names
+        if 'min_usd' in data:
+            min_usd = float(data.get('min_usd'))
         time_window_hours = int(data.get('time_window_hours', 999999))
 
         # Create analysis job
@@ -487,24 +504,32 @@ def analyze_token():
             'status': 'queued',
             'min_usd': min_usd,
             'time_window_hours': time_window_hours,
+            'transaction_limit': transaction_limit,
+            'max_wallets': max_wallets,
+            'api_settings': api_settings,
             'created_at': datetime.now().isoformat(),
             'result': None,
             'error': None
         }
 
         # Start background analysis
-        thread = Thread(target=run_token_analysis, args=(job_id, token_address, min_usd, time_window_hours))
+        thread = Thread(target=run_token_analysis, args=(job_id, token_address, min_usd, time_window_hours, transaction_limit))
         thread.daemon = True
         thread.start()
 
         print(f"[OK] Queued token analysis: {token_address} (Job ID: {job_id})")
+        print(f"[OK] Settings: ${min_usd} min, {transaction_limit} transactions, {max_wallets} wallets max")
 
         return jsonify({
             'status': 'queued',
             'job_id': job_id,
             'token_address': token_address,
-            'min_usd': min_usd,
-            'time_window_hours': time_window_hours,
+            'api_settings': {
+                'min_usd': min_usd,
+                'transaction_limit': transaction_limit,
+                'max_wallets': max_wallets,
+                'time_window_hours': time_window_hours
+            },
             'results_url': f'/analysis/{job_id}'
         }), 202
 
@@ -1132,6 +1157,62 @@ def get_debug_config():
     """Get debug configuration for client-side (JavaScript)"""
     from debug_config import get_debug_js_flag
     return jsonify({"debug": get_debug_js_flag()}), 200
+
+
+# ============================================================================
+# API Settings Management
+# ============================================================================
+
+# Global API settings (persisted in memory, can be saved to file later)
+current_api_settings = {
+    "transactionLimit": 500,
+    "minUsdFilter": 50,
+    "maxWalletsToStore": 10,
+    "apiRateDelay": 100,
+    "maxCreditsPerAnalysis": 1000,
+    "maxRetries": 3
+}
+
+@app.route('/api/settings', methods=['GET'])
+def get_api_settings():
+    """Get current API request settings"""
+    return jsonify(current_api_settings), 200
+
+
+@app.route('/api/settings', methods=['POST'])
+def update_api_settings():
+    """Update API request settings"""
+    global current_api_settings
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "No JSON data provided"}), 400
+
+        # Update settings
+        if 'transactionLimit' in data:
+            current_api_settings['transactionLimit'] = int(data['transactionLimit'])
+        if 'minUsdFilter' in data:
+            current_api_settings['minUsdFilter'] = float(data['minUsdFilter'])
+        if 'maxWalletsToStore' in data:
+            current_api_settings['maxWalletsToStore'] = int(data['maxWalletsToStore'])
+        if 'apiRateDelay' in data:
+            current_api_settings['apiRateDelay'] = int(data['apiRateDelay'])
+        if 'maxCreditsPerAnalysis' in data:
+            current_api_settings['maxCreditsPerAnalysis'] = int(data['maxCreditsPerAnalysis'])
+        if 'maxRetries' in data:
+            current_api_settings['maxRetries'] = int(data['maxRetries'])
+
+        print(f"[OK] Updated API settings: {current_api_settings}")
+
+        return jsonify({
+            "status": "success",
+            "message": "API settings updated",
+            "settings": current_api_settings
+        }), 200
+
+    except Exception as e:
+        print(f"[WARN] Error updating API settings: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == '__main__':
