@@ -552,7 +552,11 @@ def save_analyzed_token(
         print(f"[Database] Created analysis run #{analysis_run_id} for token {acronym}")
 
         # Insert early buyer wallets linked to this analysis run
-        # NOTE: We do NOT delete existing wallets - we keep all historical analyses
+        # Use INSERT OR IGNORE to skip wallets that already exist (UNIQUE constraint on token_id + wallet_address)
+        # This avoids wasteful DELETE operations since earliest buyers never change (immutable blockchain data)
+        inserted_count = 0
+        skipped_count = 0
+
         for index, bidder in enumerate(early_bidders[:max_wallets], start=1):
             total_usd = bidder.get('total_usd', 0)
             first_buy_usd = round(total_usd)
@@ -562,7 +566,7 @@ def save_analyzed_token(
             axiom_name = f"({index}/{max_wallets})${first_buy_usd}|{acronym}"
 
             cursor.execute('''
-                INSERT INTO early_buyer_wallets (
+                INSERT OR IGNORE INTO early_buyer_wallets (
                     token_id, analysis_run_id, wallet_address, position, first_buy_usd,
                     total_usd, transaction_count, average_buy_usd,
                     first_buy_timestamp, axiom_name, wallet_balance_usd
@@ -581,7 +585,16 @@ def save_analyzed_token(
                 wallet_balance_usd
             ))
 
-        print(f"[Database] Saved token {acronym} with {len(early_bidders[:max_wallets])} wallets (run #{analysis_run_id})")
+            # Track if this was a new insert or ignored duplicate
+            if cursor.rowcount > 0:
+                inserted_count += 1
+            else:
+                skipped_count += 1
+
+        if skipped_count > 0:
+            print(f"[Database] Saved token {acronym}: {inserted_count} new wallets, {skipped_count} already existed (run #{analysis_run_id})")
+        else:
+            print(f"[Database] Saved token {acronym} with {inserted_count} wallets (run #{analysis_run_id})")
         return token_id
 
 
@@ -970,6 +983,45 @@ def get_wallet_tags(wallet_address: str) -> List[Dict]:
             ORDER BY created_at DESC
         ''', (wallet_address,))
         return [{'tag': row[0], 'is_kol': bool(row[1])} for row in cursor.fetchall()]
+
+
+def get_multi_wallet_tags(wallet_addresses: List[str]) -> Dict[str, List[Dict]]:
+    """
+    Get tags for multiple wallet addresses in a single query (batch operation).
+
+    This fixes the N+1 query problem by fetching all tags in one database query
+    instead of making separate queries for each wallet address.
+
+    Args:
+        wallet_addresses: List of wallet addresses to fetch tags for
+
+    Returns:
+        Dictionary mapping wallet_address -> list of tag dicts with 'tag' and 'is_kol' fields
+    """
+    if not wallet_addresses:
+        return {}
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+
+        # Create placeholders for IN clause
+        placeholders = ','.join('?' * len(wallet_addresses))
+
+        # Single query fetches all tags for all wallets
+        cursor.execute(f'''
+            SELECT wallet_address, tag, is_kol
+            FROM wallet_tags
+            WHERE wallet_address IN ({placeholders})
+            ORDER BY wallet_address, created_at DESC
+        ''', wallet_addresses)
+
+        # Group results by wallet address
+        result = {addr: [] for addr in wallet_addresses}
+        for row in cursor.fetchall():
+            wallet_addr, tag, is_kol = row
+            result[wallet_addr].append({'tag': tag, 'is_kol': bool(is_kol)})
+
+        return result
 
 
 def get_all_tags() -> List[str]:

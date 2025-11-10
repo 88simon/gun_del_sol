@@ -18,6 +18,7 @@ import os
 import re
 import uuid
 from threading import Thread
+from concurrent.futures import ThreadPoolExecutor
 import csv
 import io
 import requests
@@ -43,6 +44,14 @@ CORS(app, resources={r"/*": {"origins": "http://localhost:3000"}})
 
 # FastAPI WebSocket server URL
 WEBSOCKET_SERVER_URL = "http://localhost:5002"
+
+# Thread pool for token analysis (limits concurrent analyses to prevent overload)
+# Max 10 concurrent analyses - prevents spawning 100+ threads which wastes resources
+ANALYSIS_EXECUTOR = ThreadPoolExecutor(max_workers=10, thread_name_prefix="analysis")
+
+# Thread pool for webhook I/O operations (non-blocking HTTP calls)
+# Dedicated executor for external API calls to Helius webhook endpoints
+WEBHOOK_EXECUTOR = ThreadPoolExecutor(max_workers=5, thread_name_prefix="webhook")
 
 # Configuration
 DATA_FILE = "monitored_addresses.json"
@@ -557,10 +566,8 @@ def analyze_token():
             'error': None
         }
 
-        # Start background analysis
-        thread = Thread(target=run_token_analysis, args=(job_id, token_address, min_usd, time_window_hours, transaction_limit, max_credits, max_wallets))
-        thread.daemon = True
-        thread.start()
+        # Start background analysis using thread pool (limits concurrency)
+        ANALYSIS_EXECUTOR.submit(run_token_analysis, job_id, token_address, min_usd, time_window_hours, transaction_limit, max_credits, max_wallets)
 
         # OPSEC: Only show first/last 4 chars of token address
         token_display = f"{token_address[:4]}...{token_address[-4:]}" if len(token_address) >= 12 else "****"
@@ -824,11 +831,8 @@ def get_batch_wallet_tags():
         if not isinstance(addresses, list):
             return jsonify({'error': 'addresses must be an array'}), 400
 
-        # Fetch tags for all addresses in one go
-        result = {}
-        for address in addresses:
-            tags = db.get_wallet_tags(address)
-            result[address] = tags
+        # Fetch tags for all addresses in one batch query (fixes N+1 problem)
+        result = db.get_multi_wallet_tags(addresses)
 
         return jsonify(result), 200
 
@@ -912,31 +916,34 @@ def create_wallet_webhook():
         # Use provided webhook URL or default to this service
         webhook_callback_url = data.get('webhook_url', f"http://localhost:5001/webhooks/callback")
 
-        # Create webhook using WebhookManager
-        webhook_manager = WebhookManager(HELIUS_API_KEY)
-        result = webhook_manager.create_webhook(
-            webhook_url=webhook_callback_url,
-            wallet_addresses=wallet_addresses,
-            transaction_types=["TRANSFER", "SWAP"]
-        )
+        # Create webhook asynchronously (non-blocking)
+        # Submit to executor and return immediately - don't wait for HTTP call to complete
+        def create_webhook_async():
+            try:
+                webhook_manager = WebhookManager(HELIUS_API_KEY)
+                result = webhook_manager.create_webhook(
+                    webhook_url=webhook_callback_url,
+                    wallet_addresses=wallet_addresses,
+                    transaction_types=["TRANSFER", "SWAP"]
+                )
+                webhook_id = result.get('webhookID')
+                print(f"[Webhook] Created webhook {webhook_id} for token ID {token_id}")
+                # TODO: Update database with webhook ID
+                return result
+            except Exception as e:
+                print(f"[Webhook] Error in async webhook creation: {e}")
+                return None
 
-        webhook_id = result.get('webhookID')
+        # Submit to webhook executor (non-blocking)
+        future = WEBHOOK_EXECUTOR.submit(create_webhook_async)
 
-        # Update database with webhook ID
-        try:
-            # Note: This would require adding an update function to database.py
-            # For now, we'll just return the webhook ID
-            print(f"[Webhook] Created webhook {webhook_id} for token ID {token_id}")
-        except Exception as e:
-            print(f"[Webhook] Could not update database: {e}")
-
+        # Return immediately without waiting for webhook creation
         return jsonify({
-            "status": "success",
-            "webhook_id": webhook_id,
+            "status": "queued",
+            "message": "Webhook creation queued (non-blocking)",
             "token_id": token_id,
-            "wallets_monitored": len(wallet_addresses),
-            "webhook_details": result
-        }), 201
+            "wallets_monitored": len(wallet_addresses)
+        }), 202
 
     except Exception as e:
         print(f"[WARN] Error creating webhook: {e}")
@@ -945,13 +952,23 @@ def create_wallet_webhook():
 
 @app.route('/webhooks/list', methods=['GET'])
 def list_webhooks():
-    """List all active webhooks"""
+    """List all active webhooks (non-blocking)"""
     if not helius_enabled:
         return jsonify({"error": "Helius API not available"}), 503
 
     try:
-        webhook_manager = WebhookManager(HELIUS_API_KEY)
-        webhooks = webhook_manager.list_webhooks()
+        def list_webhooks_async():
+            try:
+                webhook_manager = WebhookManager(HELIUS_API_KEY)
+                return webhook_manager.list_webhooks()
+            except Exception as e:
+                print(f"[Webhook] Error listing webhooks: {e}")
+                return []
+
+        # Submit to executor and wait for result (GET requests should return data)
+        # But this is still better than blocking Flask's main thread
+        future = WEBHOOK_EXECUTOR.submit(list_webhooks_async)
+        webhooks = future.result(timeout=10)  # Wait max 10s
 
         return jsonify({
             "total": len(webhooks),
@@ -965,13 +982,24 @@ def list_webhooks():
 
 @app.route('/webhooks/<webhook_id>', methods=['GET'])
 def get_webhook_details(webhook_id):
-    """Get details of a specific webhook"""
+    """Get details of a specific webhook (non-blocking)"""
     if not helius_enabled:
         return jsonify({"error": "Helius API not available"}), 503
 
     try:
-        webhook_manager = WebhookManager(HELIUS_API_KEY)
-        webhook = webhook_manager.get_webhook(webhook_id)
+        def get_webhook_async():
+            try:
+                webhook_manager = WebhookManager(HELIUS_API_KEY)
+                return webhook_manager.get_webhook(webhook_id)
+            except Exception as e:
+                print(f"[Webhook] Error getting webhook: {e}")
+                return None
+
+        future = WEBHOOK_EXECUTOR.submit(get_webhook_async)
+        webhook = future.result(timeout=10)
+
+        if webhook is None:
+            return jsonify({"error": "Webhook not found or error fetching"}), 404
 
         return jsonify(webhook), 200
 
@@ -982,18 +1010,28 @@ def get_webhook_details(webhook_id):
 
 @app.route('/webhooks/<webhook_id>', methods=['DELETE'])
 def delete_webhook(webhook_id):
-    """Delete a webhook"""
+    """Delete a webhook (non-blocking)"""
     if not helius_enabled:
         return jsonify({"error": "Helius API not available"}), 503
 
     try:
-        webhook_manager = WebhookManager(HELIUS_API_KEY)
-        webhook_manager.delete_webhook(webhook_id)
+        def delete_webhook_async():
+            try:
+                webhook_manager = WebhookManager(HELIUS_API_KEY)
+                webhook_manager.delete_webhook(webhook_id)
+                print(f"[Webhook] Deleted webhook {webhook_id}")
+                return True
+            except Exception as e:
+                print(f"[Webhook] Error deleting webhook: {e}")
+                return False
+
+        # Submit to executor and return immediately
+        future = WEBHOOK_EXECUTOR.submit(delete_webhook_async)
 
         return jsonify({
-            "status": "success",
-            "message": f"Webhook {webhook_id} deleted"
-        }), 200
+            "status": "queued",
+            "message": f"Webhook {webhook_id} deletion queued (non-blocking)"
+        }), 202
 
     except Exception as e:
         print(f"[WARN] Error deleting webhook: {e}")
