@@ -511,7 +511,7 @@ def analyze_token():
         "api_settings": {  # optional - API request settings from frontend
             "transactionLimit": 500,
             "minUsdFilter": 50,
-            "maxWalletsToStore": 10,
+            "walletCount": 10,
             "apiRateDelay": 100,
             "maxCreditsPerAnalysis": 1000,
             "maxRetries": 3
@@ -537,7 +537,8 @@ def analyze_token():
         api_settings = data.get('api_settings', {})
         transaction_limit = int(api_settings.get('transactionLimit', 500))
         min_usd = float(api_settings.get('minUsdFilter', 50))
-        max_wallets = int(api_settings.get('maxWalletsToStore', 10))
+        # Support both old and new parameter names for backward compatibility
+        max_wallets = int(api_settings.get('walletCount', api_settings.get('maxWalletsToStore', 10)))
         max_credits = int(api_settings.get('maxCreditsPerAnalysis', 1000))
 
         # DEBUG: Log what settings were received from AutoHotkey
@@ -1281,7 +1282,7 @@ def get_debug_config():
 DEFAULT_API_SETTINGS = {
     "transactionLimit": 500,
     "minUsdFilter": 50,
-    "maxWalletsToStore": 10,
+    "walletCount": 10,
     "apiRateDelay": 100,
     "maxCreditsPerAnalysis": 1000,
     "maxRetries": 3
@@ -1338,8 +1339,11 @@ def update_api_settings():
             current_api_settings['transactionLimit'] = int(data['transactionLimit'])
         if 'minUsdFilter' in data:
             current_api_settings['minUsdFilter'] = float(data['minUsdFilter'])
-        if 'maxWalletsToStore' in data:
-            current_api_settings['maxWalletsToStore'] = int(data['maxWalletsToStore'])
+        # Support both old and new parameter names for backward compatibility
+        if 'walletCount' in data:
+            current_api_settings['walletCount'] = int(data['walletCount'])
+        elif 'maxWalletsToStore' in data:
+            current_api_settings['walletCount'] = int(data['maxWalletsToStore'])
         if 'apiRateDelay' in data:
             current_api_settings['apiRateDelay'] = int(data['apiRateDelay'])
         if 'maxCreditsPerAnalysis' in data:
