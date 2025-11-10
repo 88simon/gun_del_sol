@@ -54,6 +54,32 @@ class HeliusAPI:
         except Exception:
             return False
 
+    def get_wallet_balance(self, wallet_address: str) -> tuple[Optional[float], int]:
+        """
+        Get wallet balance in USD for a wallet address.
+
+        Args:
+            wallet_address: Solana wallet address
+
+        Returns:
+            Tuple of (balance in USD, API credits used)
+            Returns (None, 0) if the call fails
+        """
+        try:
+            result = self._rpc_call('getBalance', [wallet_address])
+            # getBalance returns lamports (1 SOL = 1,000,000,000 lamports)
+            if result and 'value' in result:
+                lamports = result['value']
+                sol_balance = lamports / 1_000_000_000
+                # Convert SOL to USD (1 SOL ≈ $200 USD)
+                usd_balance = sol_balance * 200
+                # getBalance costs 1 credit per call
+                return usd_balance, 1
+            return None, 0
+        except Exception as e:
+            print(f"Error fetching wallet balance for {wallet_address}: {str(e)}")
+            return None, 0
+
     def _rpc_call(self, method: str, params: list) -> dict:
         """Make a JSON-RPC call to Helius"""
         payload = {
@@ -168,7 +194,7 @@ class HeliusAPI:
         print(f"[Helius] Skipping token creation time lookup (too expensive)")
         return None, 0
 
-    def get_parsed_transactions(self, address: str, limit: int = 100, get_earliest: bool = False, token_creation_time: int = None) -> tuple[List[Dict], int]:
+    def get_parsed_transactions(self, address: str, limit: int = 100, get_earliest: bool = False, token_creation_time: int = None, max_credits: int = 1000) -> tuple[List[Dict], int]:
         """
         Get parsed transaction history for an address.
         Returns transactions with decoded swap/transfer data.
@@ -186,7 +212,7 @@ class HeliusAPI:
         try:
             if get_earliest:
                 # Fetch earliest transactions using the new efficient method
-                return self._get_earliest_transactions_new(address, limit, token_creation_time)
+                return self._get_earliest_transactions_new(address, limit, token_creation_time, max_credits)
 
             # Get transaction signatures first (most recent by default)
             # NOTE: getSignaturesForAddress costs 1 credit per call on Helius paid plans
@@ -241,7 +267,7 @@ class HeliusAPI:
             print(f"Error fetching parsed transactions: {str(e)}")
             return [], 0
 
-    def _get_earliest_transactions_new(self, address: str, limit: int = 500, token_creation_time: int = None) -> tuple[List[Dict], int]:
+    def _get_earliest_transactions_new(self, address: str, limit: int = 500, token_creation_time: int = None, max_credits: int = 1000) -> tuple[List[Dict], int]:
         """
         Fetch earliest transactions for an address using Helius's getTransactionsForAddress.
         This is MUCH more efficient than the old method - uses timestamp filtering and ascending order.
@@ -250,17 +276,20 @@ class HeliusAPI:
             address: Solana address to fetch transactions for
             limit: Maximum number of earliest transactions to return
             token_creation_time: Unix timestamp of token creation (optional)
+            max_credits: Maximum API credits to spend (default: 1000)
 
         Returns:
             Tuple of (List of parsed transactions oldest first, API credits used)
         """
         print(f"[Helius] Fetching earliest transactions using getTransactionsForAddress (efficient method)...")
+        print(f"[Helius] Credit limit: {max_credits} credits (max {max_credits // 100} API calls)")
         if token_creation_time:
             print(f"[Helius] Filtering from token creation time: {datetime.fromtimestamp(token_creation_time)}")
 
         all_transactions = []
         api_calls = 0
         pagination_token = None
+        max_api_calls = max_credits // 100  # Each call costs 100 credits
 
         try:
             # getTransactionsForAddress costs 100 credits per call
@@ -268,7 +297,7 @@ class HeliusAPI:
             # We'll need multiple calls if limit > 100
             remaining_limit = min(limit, 500)  # Cap at 500 for safety
 
-            while remaining_limit > 0:
+            while remaining_limit > 0 and api_calls < max_api_calls:
                 batch_limit = min(remaining_limit, 100)  # Max 100 per call with full details
 
                 # Build request params
@@ -339,6 +368,11 @@ class HeliusAPI:
             total_credits = api_calls * 100  # Each call costs 100 credits
             print(f"[Helius] Total transactions retrieved: {len(all_transactions)}")
             print(f"[Helius] API credits used: {api_calls} calls × 100 credits = {total_credits} total")
+
+            # Warn if we hit the credit limit
+            if api_calls >= max_api_calls:
+                print(f"[Helius] ⚠️  WARNING: Reached credit limit ({max_credits} credits)")
+                print(f"[Helius] Analysis may be incomplete. Consider increasing maxCreditsPerAnalysis in settings.")
 
             return all_transactions, total_credits
 
@@ -582,7 +616,8 @@ class HeliusAPI:
         mint_address: str,
         min_usd: float = 50.0,
         time_window_hours: int = 999999,
-        max_transactions: int = 500
+        max_transactions: int = 500,
+        max_credits: int = 1000
     ) -> Dict:
         """
         Analyze a token to find early bidders.
@@ -633,12 +668,18 @@ class HeliusAPI:
                 mint_address,
                 limit=max_transactions,
                 get_earliest=True,
-                token_creation_time=token_creation_time
+                token_creation_time=token_creation_time,
+                max_credits=max_credits
             )
         else:
             # Fallback to old method if we can't determine creation time
             print(f"[Helius] Warning: Could not determine token creation time, using fallback method")
-            transactions, transaction_credits = self.get_parsed_transactions(mint_address, limit=max_transactions, get_earliest=True)
+            transactions, transaction_credits = self.get_parsed_transactions(
+                mint_address,
+                limit=max_transactions,
+                get_earliest=True,
+                max_credits=max_credits
+            )
 
         print(f"[Helius] Retrieved {len(transactions)} earliest transactions (used {transaction_credits} API credits)")
 
@@ -746,10 +787,26 @@ class HeliusAPI:
 
         print(f"[Helius] Found {len(early_bidders)} early bidders (>${min_usd} USD)")
 
-        # Calculate actual API credits used
-        total_credits = metadata_credits + creation_time_credits + transaction_credits
+        # Limit to max_wallets BEFORE fetching balances to save API credits
+        max_wallets = max_wallets_to_store or 10  # Default to 10 if not specified
+        if len(early_bidders) > max_wallets:
+            print(f"[Helius] Limiting to top {max_wallets} earliest wallets (from {len(early_bidders)} total)")
+            early_bidders = early_bidders[:max_wallets]
 
-        print(f"[Helius] Total API credits used: {total_credits} ({metadata_credits} metadata + {creation_time_credits} creation time lookup + {transaction_credits} transactions)")
+        # Fetch wallet balances for the limited set of early bidders
+        print(f"[Helius] Fetching wallet balances for {len(early_bidders)} wallets...")
+        balance_credits = 0
+        for bidder in early_bidders:
+            wallet_balance_usd, credits = self.get_wallet_balance(bidder['wallet_address'])
+            bidder['wallet_balance_usd'] = wallet_balance_usd
+            balance_credits += credits
+
+        print(f"[Helius] Wallet balances fetched (used {balance_credits} credits)")
+
+        # Calculate actual API credits used
+        total_credits = metadata_credits + creation_time_credits + transaction_credits + balance_credits
+
+        print(f"[Helius] Total API credits used: {total_credits} ({metadata_credits} metadata + {creation_time_credits} creation time lookup + {transaction_credits} transactions + {balance_credits} wallet balances)")
 
         return {
             'token_address': mint_address,
@@ -950,7 +1007,8 @@ class TokenAnalyzer:
         mint_address: str,
         min_usd: float = 50.0,
         time_window_hours: int = 999999,
-        max_transactions: int = 500
+        max_transactions: int = 500,
+        max_credits: int = 1000
     ) -> Dict:
         """
         Analyze a token to find early bidders.
@@ -960,6 +1018,7 @@ class TokenAnalyzer:
             min_usd: Minimum USD threshold (default: $50)
             time_window_hours: Analysis window in hours (default: 999999, effectively unlimited)
             max_transactions: Maximum transactions to analyze (default: 500)
+            max_credits: Maximum API credits to spend (default: 1000)
 
         Returns:
             Analysis results dictionary
@@ -968,7 +1027,8 @@ class TokenAnalyzer:
             mint_address=mint_address,
             min_usd=min_usd,
             time_window_hours=time_window_hours,
-            max_transactions=max_transactions
+            max_transactions=max_transactions,
+            max_credits=max_credits
         )
 
 

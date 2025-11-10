@@ -321,6 +321,7 @@ def init_database():
                 average_buy_usd REAL,
                 first_buy_timestamp TIMESTAMP,
                 axiom_name TEXT,
+                wallet_balance_usd REAL,
                 FOREIGN KEY (token_id) REFERENCES analyzed_tokens(id) ON DELETE CASCADE,
                 FOREIGN KEY (analysis_run_id) REFERENCES analysis_runs(id) ON DELETE CASCADE,
                 UNIQUE(analysis_run_id, wallet_address)
@@ -376,6 +377,27 @@ def init_database():
             ON wallet_tags(wallet_address)
         ''')
 
+        # NEW: Critical performance indices
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_is_deleted_timestamp
+            ON analyzed_tokens(is_deleted, analysis_timestamp DESC)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_token_analysis_run
+            ON early_buyer_wallets(token_id, analysis_run_id)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_analysis_runs_token_timestamp
+            ON analysis_runs(token_id, analysis_timestamp DESC)
+        ''')
+
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_wallet_tags_tag
+            ON wallet_tags(tag)
+        ''')
+
         # Run migrations to add new columns to existing tables
         # Check if total_usd column exists in early_buyer_wallets, if not add it
         cursor.execute("PRAGMA table_info(early_buyer_wallets)")
@@ -392,6 +414,10 @@ def init_database():
         if 'average_buy_usd' not in ebw_columns:
             print("[Database] Migrating: Adding average_buy_usd column...")
             cursor.execute('ALTER TABLE early_buyer_wallets ADD COLUMN average_buy_usd REAL')
+
+        if 'wallet_balance_usd' not in ebw_columns:
+            print("[Database] Migrating: Adding wallet_balance_usd column...")
+            cursor.execute('ALTER TABLE early_buyer_wallets ADD COLUMN wallet_balance_usd REAL')
 
         # Check if credits_used and last_analysis_credits columns exist in analyzed_tokens, if not add them
         cursor.execute("PRAGMA table_info(analyzed_tokens)")
@@ -531,14 +557,15 @@ def save_analyzed_token(
             first_buy_usd = round(total_usd)
             transaction_count = bidder.get('transaction_count', 1)
             average_buy_usd = bidder.get('average_buy_usd', total_usd)
+            wallet_balance_usd = bidder.get('wallet_balance_usd')
             axiom_name = f"({index}/10)${first_buy_usd}|{acronym}"
 
             cursor.execute('''
                 INSERT INTO early_buyer_wallets (
                     token_id, analysis_run_id, wallet_address, position, first_buy_usd,
                     total_usd, transaction_count, average_buy_usd,
-                    first_buy_timestamp, axiom_name
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    first_buy_timestamp, axiom_name, wallet_balance_usd
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 token_id,
                 analysis_run_id,
@@ -549,7 +576,8 @@ def save_analyzed_token(
                 transaction_count,
                 average_buy_usd,
                 bidder.get('first_buy_time'),
-                axiom_name
+                axiom_name,
+                wallet_balance_usd
             ))
 
         print(f"[Database] Saved token {acronym} with {len(early_bidders[:10])} wallets (run #{analysis_run_id})")
@@ -834,15 +862,32 @@ def get_multi_token_wallets(min_tokens: int = 2) -> List[Dict]:
         cursor = conn.cursor()
 
         # Find wallets that appear in multiple tokens
+        # OPTIMIZED: Use CTE with window function instead of correlated subquery
         cursor.execute('''
+            WITH latest_balances AS (
+                SELECT
+                    ebw.wallet_address,
+                    ebw.wallet_balance_usd,
+                    ar.analysis_timestamp,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY ebw.wallet_address
+                        ORDER BY ar.analysis_timestamp DESC
+                    ) as rn
+                FROM early_buyer_wallets ebw
+                JOIN analysis_runs ar ON ebw.analysis_run_id = ar.id
+                WHERE ebw.wallet_balance_usd IS NOT NULL
+            )
             SELECT
                 ebw.wallet_address,
                 COUNT(DISTINCT ebw.token_id) as token_count,
                 GROUP_CONCAT(DISTINCT at.token_name || ' (' || at.token_symbol || ')') as token_names,
                 GROUP_CONCAT(DISTINCT at.token_address) as token_addresses,
-                GROUP_CONCAT(DISTINCT ebw.token_id) as token_ids
+                GROUP_CONCAT(DISTINCT ebw.token_id) as token_ids,
+                lb.wallet_balance_usd
             FROM early_buyer_wallets ebw
             JOIN analyzed_tokens at ON ebw.token_id = at.id
+            LEFT JOIN latest_balances lb ON lb.wallet_address = ebw.wallet_address AND lb.rn = 1
+            WHERE (at.is_deleted = 0 OR at.is_deleted IS NULL)
             GROUP BY ebw.wallet_address
             HAVING COUNT(DISTINCT ebw.token_id) >= ?
             ORDER BY token_count DESC, ebw.wallet_address
@@ -855,7 +900,8 @@ def get_multi_token_wallets(min_tokens: int = 2) -> List[Dict]:
                 'token_count': row[1],
                 'token_names': row[2].split(',') if row[2] else [],
                 'token_addresses': row[3].split(',') if row[3] else [],
-                'token_ids': [int(x) for x in row[4].split(',')] if row[4] else []
+                'token_ids': [int(x) for x in row[4].split(',')] if row[4] else [],
+                'wallet_balance_usd': row[5]
             })
 
         return wallets

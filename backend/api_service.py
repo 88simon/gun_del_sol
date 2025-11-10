@@ -332,12 +332,12 @@ def clear_all():
 # Token Analysis Endpoints
 # ============================================================================
 
-def run_token_analysis(job_id, token_address, min_usd, time_window_hours, max_transactions=500):
+def run_token_analysis(job_id, token_address, min_usd, time_window_hours, max_transactions=500, max_credits=1000):
     """Background worker function to analyze a token"""
     try:
-        print(f"[Job {job_id}] === ANALYSIS STARTED (NEW CODE v7 - ON-CURVE FILTERING) ===")
+        print(f"[Job {job_id}] === ANALYSIS STARTED (NEW CODE v8 - CREDIT LIMITING) ===")
         print(f"[Job {job_id}] Starting analysis for {token_address}")
-        print(f"[Job {job_id}] Settings: min_usd=${min_usd}, time_window={time_window_hours}h, max_transactions={max_transactions}")
+        print(f"[Job {job_id}] Settings: min_usd=${min_usd}, time_window={time_window_hours}h, max_transactions={max_transactions}, max_credits={max_credits}")
         analysis_jobs[job_id]['status'] = 'processing'
 
         analyzer = TokenAnalyzer(HELIUS_API_KEY)
@@ -345,7 +345,8 @@ def run_token_analysis(job_id, token_address, min_usd, time_window_hours, max_tr
             mint_address=token_address,
             min_usd=min_usd,
             time_window_hours=time_window_hours,
-            max_transactions=max_transactions
+            max_transactions=max_transactions,
+            max_credits=max_credits
         )
 
         # Extract token info with proper null handling
@@ -488,12 +489,11 @@ def analyze_token():
         transaction_limit = int(api_settings.get('transactionLimit', 500))
         min_usd = float(api_settings.get('minUsdFilter', 50))
         max_wallets = int(api_settings.get('maxWalletsToStore', 10))
-        # Note: apiRateDelay, maxCreditsPerAnalysis, maxRetries are stored but not yet used in analysis
-        # These will be implemented in future iterations
+        max_credits = int(api_settings.get('maxCreditsPerAnalysis', 1000))
 
         # DEBUG: Log what settings were received from AutoHotkey
         print(f"[DEBUG] Received api_settings from request: {api_settings}")
-        print(f"[DEBUG] Parsed transaction_limit: {transaction_limit}")
+        print(f"[DEBUG] Parsed transaction_limit: {transaction_limit}, max_credits: {max_credits}")
 
         # For backwards compatibility, also accept old parameter names
         if 'min_usd' in data:
@@ -510,6 +510,7 @@ def analyze_token():
             'time_window_hours': time_window_hours,
             'transaction_limit': transaction_limit,
             'max_wallets': max_wallets,
+            'max_credits': max_credits,
             'api_settings': api_settings,
             'created_at': datetime.now().isoformat(),
             'result': None,
@@ -517,7 +518,7 @@ def analyze_token():
         }
 
         # Start background analysis
-        thread = Thread(target=run_token_analysis, args=(job_id, token_address, min_usd, time_window_hours, transaction_limit))
+        thread = Thread(target=run_token_analysis, args=(job_id, token_address, min_usd, time_window_hours, transaction_limit, max_credits))
         thread.daemon = True
         thread.start()
 
@@ -762,6 +763,35 @@ def manage_wallet_tags(wallet_address):
 
     except Exception as e:
         log_error(f"Failed to manage wallet tags: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/wallets/batch-tags', methods=['POST'])
+def get_batch_wallet_tags():
+    """
+    Get tags for multiple wallets in a single request.
+    Expected JSON payload: {"addresses": ["wallet1", "wallet2", ...]}
+    Returns: {"wallet1": [...tags], "wallet2": [...tags], ...}
+    """
+    try:
+        data = request.get_json()
+        if not data or 'addresses' not in data:
+            return jsonify({'error': 'addresses array is required'}), 400
+
+        addresses = data['addresses']
+        if not isinstance(addresses, list):
+            return jsonify({'error': 'addresses must be an array'}), 400
+
+        # Fetch tags for all addresses in one go
+        result = {}
+        for address in addresses:
+            tags = db.get_wallet_tags(address)
+            result[address] = tags
+
+        return jsonify(result), 200
+
+    except Exception as e:
+        log_error(f"Failed to get batch wallet tags: {e}")
         return jsonify({'error': str(e)}), 500
 
 

@@ -1381,9 +1381,7 @@ AnalyzeTokenWithService(tokenAddress) {
         result := RunWait('cmd /c ' . command, , "Hide")
 
         if (result = 0) {
-            ShowNotification("Analysis queued", "View results at localhost:5001")
-            ; Optionally open browser to results
-            Run "http://localhost:5001/analysis"
+            ShowNotification("Analysis queued", "Check dashboard for results")
         } else {
             ShowNotification("Analysis service offline", "Start monitor service first")
         }
