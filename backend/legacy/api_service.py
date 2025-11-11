@@ -753,6 +753,57 @@ def get_multi_token_wallets():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/wallets/refresh-balances', methods=['POST'])
+def refresh_wallet_balances():
+    """
+    Refresh wallet balances for specified wallet addresses.
+    Expects JSON: {"wallet_addresses": ["addr1", "addr2", ...]}
+    """
+    try:
+        data = request.get_json()
+        if not data or 'wallet_addresses' not in data:
+            return jsonify({'error': 'wallet_addresses is required'}), 400
+
+        wallet_addresses = data['wallet_addresses']
+        if not isinstance(wallet_addresses, list) or len(wallet_addresses) == 0:
+            return jsonify({'error': 'wallet_addresses must be a non-empty array'}), 400
+
+        # Create analyzer instance
+        analyzer = TokenAnalyzer(HELIUS_API_KEY)
+
+        # Fetch balances for all wallets
+        results = []
+        total_credits = 0
+
+        for wallet_address in wallet_addresses:
+            balance_usd, credits = analyzer.get_wallet_balance(wallet_address)
+            total_credits += credits
+
+            results.append({
+                'wallet_address': wallet_address,
+                'balance_usd': balance_usd if balance_usd is not None else None,
+                'success': balance_usd is not None
+            })
+
+            # Update balance in database if successful
+            if balance_usd is not None:
+                db.update_wallet_balance(wallet_address, balance_usd)
+
+        log_info(f"Refreshed balances for {len(wallet_addresses)} wallets (used {total_credits} API credits)")
+
+        return jsonify({
+            'message': 'Balances refreshed successfully',
+            'results': results,
+            'total_wallets': len(wallet_addresses),
+            'successful': sum(1 for r in results if r['success']),
+            'api_credits_used': total_credits
+        }), 200
+
+    except Exception as e:
+        log_error(f"Failed to refresh wallet balances: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/wallets/<wallet_address>/tags', methods=['GET', 'POST', 'DELETE'])
 def manage_wallet_tags(wallet_address):
     """
@@ -1089,7 +1140,7 @@ def webhook_callback():
                     db.save_wallet_activity(
                         wallet_address=wallet_address,
                         transaction_signature=signature,
-                        timestamp=datetime.fromtimestamp(timestamp).isoformat() if timestamp else None,
+                        timestamp=datetime.utcfromtimestamp(timestamp).isoformat() if timestamp else None,
                         activity_type=tx_type,
                         description=description,
                         sol_amount=sol_amount,

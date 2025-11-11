@@ -23,7 +23,7 @@ Performance Features:
 ============================================================================
 """
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response, Body, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import ORJSONResponse
@@ -37,12 +37,24 @@ from functools import lru_cache
 import time
 import hashlib
 import httpx
+import logging
 
 # Import existing modules
 import analyzed_tokens_db as db
-from helius_api import TokenAnalyzer, generate_axiom_export, generate_token_acronym
+from helius_api import TokenAnalyzer, generate_axiom_export, generate_token_acronym, WebhookManager
 import requests
 import json
+from secure_logging import (
+    log_info,
+    log_success,
+    log_warning,
+    log_error,
+    log_address_registered,
+    log_address_removed,
+    sanitize_address
+)
+from debug_config import DEBUG_MODE, get_debug_js_flag
+from concurrent.futures import ThreadPoolExecutor
 
 # ============================================================================
 # Configuration & API Key Loading
@@ -101,6 +113,95 @@ def load_api_settings() -> dict:
 
 CURRENT_API_SETTINGS = load_api_settings()
 print(f"[Config] API Settings: walletCount={CURRENT_API_SETTINGS['walletCount']}, transactionLimit={CURRENT_API_SETTINGS['transactionLimit']}, maxCredits={CURRENT_API_SETTINGS['maxCreditsPerAnalysis']}")
+
+# ============================================================================ 
+# Monitored Address Storage (legacy JSON file)
+# ============================================================================
+
+DATA_FILE = os.path.join(SCRIPT_DIR, "monitored_addresses.json")
+DEFAULT_THRESHOLD = 100
+monitored_addresses: Dict[str, Dict[str, Any]] = {}
+
+
+def load_addresses():
+    """Load monitored addresses from JSON file"""
+    global monitored_addresses
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, "r") as f:
+                monitored_addresses = json.load(f)
+            print(f"[Config] Loaded {len(monitored_addresses)} monitored addresses from disk")
+        except Exception as exc:
+            print(f"[Config] Failed to load monitored addresses: {exc}")
+            monitored_addresses = {}
+    else:
+        monitored_addresses = {}
+
+
+def save_addresses():
+    """Persist monitored addresses to JSON"""
+    try:
+        with open(DATA_FILE, "w") as f:
+            json.dump(monitored_addresses, f, indent=2)
+        return True
+    except Exception as exc:
+        print(f"[Config] Failed to save addresses: {exc}")
+        return False
+
+
+def is_valid_solana_address(address: str) -> bool:
+    """Basic Solana address validation"""
+    if not address or not isinstance(address, str):
+        return False
+    if len(address) < 32 or len(address) > 44:
+        return False
+    base58 = set("123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz")
+    return all(ch in base58 for ch in address)
+
+
+# Load addresses during startup
+load_addresses()
+
+# ============================================================================
+# WebSocket Connection Manager
+# ============================================================================
+
+# Configure logging for WebSocket
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
+class ConnectionManager:
+    """Manages WebSocket connections for real-time notifications"""
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+        logger.info(f"[WebSocket] Client connected. Total connections: {len(self.active_connections)}")
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+            logger.info(f"[WebSocket] Client disconnected. Total connections: {len(self.active_connections)}")
+
+    async def broadcast(self, message: dict):
+        """Broadcast message to all connected clients"""
+        disconnected = []
+        for connection in self.active_connections:
+            try:
+                await connection.send_json(message)
+                logger.info(f"[WebSocket] Sent message to client: {message.get('event')}")
+            except Exception as e:
+                logger.error(f"[WebSocket] Error sending to client: {e}")
+                disconnected.append(connection)
+
+        # Remove disconnected clients
+        for connection in disconnected:
+            self.disconnect(connection)
+
+# Global connection manager instance
+manager = ConnectionManager()
 
 # ============================================================================
 # FastAPI App Configuration
@@ -190,6 +291,87 @@ class RemoveTagRequest(BaseModel):
     tag: str
 
 
+class AnalysisSettings(BaseModel):
+    """API settings for token analysis"""
+    transactionLimit: int = Field(default=CURRENT_API_SETTINGS["transactionLimit"], ge=1, le=10000)
+    minUsdFilter: float = Field(default=CURRENT_API_SETTINGS["minUsdFilter"], ge=0)
+    walletCount: int = Field(default=CURRENT_API_SETTINGS["walletCount"], ge=1, le=100)
+    apiRateDelay: int = Field(default=CURRENT_API_SETTINGS["apiRateDelay"], ge=0)
+    maxCreditsPerAnalysis: int = Field(default=CURRENT_API_SETTINGS["maxCreditsPerAnalysis"], ge=1, le=10000)
+    maxRetries: int = Field(default=CURRENT_API_SETTINGS["maxRetries"], ge=0, le=10)
+
+
+class AnalyzeTokenRequest(BaseModel):
+    """Request model for token analysis"""
+    address: str = Field(..., min_length=32, max_length=44, description="Solana token address")
+    api_settings: Optional[AnalysisSettings] = None
+    min_usd: Optional[float] = None
+    time_window_hours: int = Field(default=999999, ge=1)
+
+
+class RegisterAddressRequest(BaseModel):
+    address: str = Field(..., min_length=32, max_length=44)
+    note: Optional[str] = None
+    timestamp: Optional[str] = None
+
+
+class AddressNoteRequest(BaseModel):
+    note: Optional[str] = None
+
+
+class ImportAddressEntry(BaseModel):
+    address: str
+    registered_at: Optional[str] = None
+    threshold: Optional[int] = None
+    total_notifications: Optional[int] = None
+    last_notification: Optional[str] = None
+    note: Optional[str] = None
+
+
+class ImportAddressesRequest(BaseModel):
+    addresses: List[ImportAddressEntry]
+
+
+class BatchTagsRequest(BaseModel):
+    addresses: List[str]
+
+
+class WalletTagRequest(BaseModel):
+    tag: str
+    is_kol: Optional[bool] = False
+
+
+class CreateWebhookRequest(BaseModel):
+    token_id: int
+    webhook_url: Optional[str] = None
+
+
+class UpdateSettingsRequest(BaseModel):
+    transactionLimit: Optional[int] = Field(None, ge=1, le=10000)
+    minUsdFilter: Optional[float] = Field(None, ge=0)
+    walletCount: Optional[int] = Field(None, ge=1, le=100)
+    apiRateDelay: Optional[int] = Field(None, ge=0)
+    maxCreditsPerAnalysis: Optional[int] = Field(None, ge=1, le=10000)
+    maxRetries: Optional[int] = Field(None, ge=0, le=10)
+
+
+class AnalysisCompleteNotification(BaseModel):
+    """Notification payload for analysis completion"""
+    job_id: str
+    token_name: str
+    token_symbol: str
+    acronym: str
+    wallets_found: int
+    token_id: int
+
+
+class AnalysisStartNotification(BaseModel):
+    """Notification payload for analysis start"""
+    job_id: str
+    token_name: str
+    token_symbol: str
+
+
 # ============================================================================
 # Database Helper (Async)
 # ============================================================================
@@ -264,6 +446,230 @@ class ResponseCache:
 
 
 cache = ResponseCache()
+
+
+# ============================================================================ 
+# Address Monitoring & Utility Endpoints
+# ============================================================================
+
+@app.post("/register")
+async def register_address(payload: RegisterAddressRequest):
+    address = payload.address.strip()
+    if not is_valid_solana_address(address):
+        raise HTTPException(status_code=400, detail="Invalid Solana address format")
+
+    if address in monitored_addresses:
+        existing = monitored_addresses[address]
+        return {
+            "status": "already_registered",
+            "message": "Address already being monitored",
+            "address": address,
+            "registered_at": existing.get("registered_at")
+        }
+
+    note = payload.note.strip() if payload.note else None
+    monitored_addresses[address] = {
+        "address": address,
+        "registered_at": datetime.now().isoformat(),
+        "threshold": DEFAULT_THRESHOLD,
+        "total_notifications": 0,
+        "last_notification": None,
+        "note": note
+    }
+
+    if not save_addresses():
+        monitored_addresses.pop(address, None)
+        raise HTTPException(status_code=500, detail="Failed to save address")
+
+    log_address_registered(sanitize_address(address))
+    return {
+        "status": "success",
+        "message": "Address registered for monitoring",
+        "address": address,
+        "threshold": DEFAULT_THRESHOLD,
+        "total_monitored": len(monitored_addresses)
+    }
+
+
+@app.get("/addresses")
+async def list_addresses():
+    return {
+        "total": len(monitored_addresses),
+        "addresses": list(monitored_addresses.values())
+    }
+
+
+@app.get("/address/{address}")
+async def get_address(address: str):
+    if address in monitored_addresses:
+        return monitored_addresses[address]
+    raise HTTPException(status_code=404, detail="Address not found")
+
+
+@app.delete("/address/{address}")
+async def delete_address(address: str):
+    if address not in monitored_addresses:
+        raise HTTPException(status_code=404, detail="Address not found")
+    monitored_addresses.pop(address, None)
+    save_addresses()
+    log_address_removed(sanitize_address(address))
+    return {
+        "status": "success",
+        "message": "Address removed from monitoring",
+        "address": address
+    }
+
+
+@app.put("/address/{address}/note")
+async def update_address_note(address: str, payload: AddressNoteRequest):
+    if address not in monitored_addresses:
+        raise HTTPException(status_code=404, detail="Address not found")
+
+    note = payload.note.strip() if payload.note else None
+    monitored_addresses[address]["note"] = note
+    save_addresses()
+    log_success(f"Updated note for address {sanitize_address(address)}")
+    return {
+        "status": "success",
+        "message": "Note updated successfully",
+        "address": address,
+        "note": note
+    }
+
+
+@app.post("/import")
+async def import_addresses(payload: ImportAddressesRequest):
+    added = 0
+    skipped = 0
+    for entry in payload.addresses:
+        address = entry.address.strip()
+        if not is_valid_solana_address(address):
+            skipped += 1
+            continue
+        if address in monitored_addresses:
+            skipped += 1
+            continue
+
+        monitored_addresses[address] = {
+            "address": address,
+            "registered_at": entry.registered_at or datetime.now().isoformat(),
+            "threshold": entry.threshold or DEFAULT_THRESHOLD,
+            "total_notifications": entry.total_notifications or 0,
+            "last_notification": entry.last_notification,
+            "note": entry.note
+        }
+        added += 1
+
+    save_addresses()
+    return {
+        "status": "success",
+        "message": f"Imported {added} addresses ({skipped} duplicates skipped)",
+        "added": added,
+        "skipped": skipped,
+        "total": len(monitored_addresses)
+    }
+
+
+@app.post("/clear")
+async def clear_addresses():
+    count = len(monitored_addresses)
+    monitored_addresses.clear()
+    save_addresses()
+    log_warning(f"Cleared all {count} monitored addresses")
+    return {
+        "status": "success",
+        "message": f"Cleared {count} addresses",
+        "total_monitored": 0
+    }
+
+
+@app.get("/api/debug-mode")
+async def get_debug_mode():
+    return {"debug_mode": DEBUG_MODE}
+
+
+@app.get("/api/debug/config")
+async def get_debug_config():
+    return {"debug": get_debug_js_flag()}
+
+
+@app.get("/api/settings")
+async def get_api_settings():
+    settings = CURRENT_API_SETTINGS.copy()
+    settings["maxWalletsToStore"] = settings["walletCount"]
+    return settings
+
+
+@app.post("/api/settings")
+async def update_api_settings(payload: UpdateSettingsRequest):
+    global CURRENT_API_SETTINGS
+    updates = {k: v for k, v in payload.dict(exclude_unset=True).items()}
+    if not updates:
+        return {"status": "noop", "settings": CURRENT_API_SETTINGS}
+
+    CURRENT_API_SETTINGS = {**CURRENT_API_SETTINGS, **updates}
+    try:
+        with open(SETTINGS_FILE, "w") as f:
+            json.dump(CURRENT_API_SETTINGS, f, indent=2)
+        print(f"[Config] API settings updated: {CURRENT_API_SETTINGS}")
+    except Exception as exc:
+        print(f"[Config] Failed to persist API settings: {exc}")
+        raise HTTPException(status_code=500, detail="Failed to save settings")
+
+    settings = CURRENT_API_SETTINGS.copy()
+    settings["maxWalletsToStore"] = settings["walletCount"]
+    return {"status": "success", "settings": settings}
+
+
+# ============================================================================
+# WebSocket & Notification Endpoints
+# ============================================================================
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket endpoint for real-time notifications"""
+    await manager.connect(websocket)
+    try:
+        # Keep connection alive and handle any incoming messages
+        while True:
+            data = await websocket.receive_text()
+            # Echo back for heartbeat/testing
+            await websocket.send_json({"type": "pong", "data": data})
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+    except Exception as e:
+        logger.error(f"[WebSocket] Error: {e}")
+        manager.disconnect(websocket)
+
+
+@app.post("/notify/analysis_complete")
+async def notify_analysis_complete(notification: AnalysisCompleteNotification):
+    """HTTP endpoint to trigger analysis complete notifications"""
+    logger.info(f"[Notify] Analysis complete: {notification.token_name} ({notification.wallets_found} wallets)")
+
+    message = {
+        "event": "analysis_complete",
+        "data": notification.dict()
+    }
+
+    await manager.broadcast(message)
+
+    return {"status": "broadcasted", "connections": len(manager.active_connections)}
+
+
+@app.post("/notify/analysis_start")
+async def notify_analysis_start(notification: AnalysisStartNotification):
+    """HTTP endpoint to trigger analysis start notifications"""
+    logger.info(f"[Notify] Analysis started: {notification.token_name}")
+
+    message = {
+        "event": "analysis_start",
+        "data": notification.dict()
+    }
+
+    await manager.broadcast(message)
+
+    return {"status": "broadcasted", "connections": len(manager.active_connections)}
 
 
 # ============================================================================
@@ -430,7 +836,7 @@ async def get_token_by_id(token_id: int):
 
 @app.get("/api/tokens/{token_id}/history")
 async def get_token_analysis_history(token_id: int):
-    """Get analysis history for a specific token"""
+    """Get analysis history for a specific token (parity with Flask backend)"""
     async with aiosqlite.connect(DB_PATH) as conn:
         conn.row_factory = aiosqlite.Row
 
@@ -440,13 +846,12 @@ async def get_token_analysis_history(token_id: int):
         if not await cursor.fetchone():
             raise HTTPException(status_code=404, detail="Token not found")
 
-        # Get analysis runs
+        # Fetch analysis runs in reverse chronological order
         runs_query = """
-            SELECT
-                ar.id, ar.analysis_timestamp, ar.wallets_found, ar.credits_used
-            FROM analysis_runs ar
-            WHERE ar.token_id = ?
-            ORDER BY ar.analysis_timestamp DESC
+            SELECT id, analysis_timestamp, wallets_found, credits_used
+            FROM analysis_runs
+            WHERE token_id = ?
+            ORDER BY analysis_timestamp DESC
         """
         cursor = await conn.execute(runs_query, (token_id,))
         run_rows = await cursor.fetchall()
@@ -455,11 +860,12 @@ async def get_token_analysis_history(token_id: int):
         for run_row in run_rows:
             run = dict(run_row)
 
-            # Get wallets for this run
+            # Load wallets captured during this run (matches Flask implementation)
             wallets_query = """
-                SELECT * FROM analysis_run_wallets
+                SELECT *
+                FROM early_buyer_wallets
                 WHERE analysis_run_id = ?
-                ORDER BY first_buy_timestamp ASC
+                ORDER BY position ASC
             """
             wallet_cursor = await conn.execute(wallets_query, (run['id'],))
             wallet_rows = await wallet_cursor.fetchall()
@@ -521,9 +927,9 @@ async def permanent_delete_token(token_id: int):
 async def get_multi_early_buyer_wallets(min_tokens: int = 2):
     """Get wallets that appear in multiple tokens"""
     cache_key = f"multi_early_buyer_wallets_{min_tokens}"
-    cached = cache.get(cache_key)
-    if cached:
-        return cached
+    cached_data, _ = cache.get(cache_key)
+    if cached_data:
+        return cached_data
 
     async with aiosqlite.connect(DB_PATH) as conn:
         conn.row_factory = aiosqlite.Row
@@ -688,9 +1094,9 @@ async def remove_wallet_tag(wallet_address: str, request: RemoveTagRequest):
 async def get_all_tags():
     """Get all unique tags"""
     cache_key = "all_tags"
-    cached = cache.get(cache_key)
-    if cached:
-        return cached
+    cached_data, _ = cache.get(cache_key)
+    if cached_data:
+        return cached_data
 
     async with aiosqlite.connect(DB_PATH) as conn:
         query = "SELECT DISTINCT tag FROM wallet_tags ORDER BY tag"
@@ -712,9 +1118,9 @@ async def get_all_tags():
 async def get_codex():
     """Get all wallets with tags (Codex)"""
     cache_key = "codex"
-    cached = cache.get(cache_key)
-    if cached:
-        return cached
+    cached_data, _ = cache.get(cache_key)
+    if cached_data:
+        return cached_data
 
     async with aiosqlite.connect(DB_PATH) as conn:
         conn.row_factory = aiosqlite.Row
@@ -742,6 +1148,62 @@ async def get_codex():
         return result
 
 
+@app.get("/analysis")
+async def list_analyses(search: Optional[str] = None, limit: int = 100):
+    """Mirror Flask /analysis endpoint (list jobs + completed tokens)"""
+    try:
+        if search:
+            tokens = db.search_tokens(search.strip())
+        else:
+            tokens = db.get_analyzed_tokens(limit=limit)
+
+        jobs: List[Dict[str, Any]] = []
+        for token in tokens:
+            jobs.append({
+                "job_id": str(token["id"]),
+                "status": "completed",
+                "token_address": token["token_address"],
+                "token_name": token.get("token_name"),
+                "token_symbol": token.get("token_symbol"),
+                "acronym": token.get("acronym"),
+                "wallets_found": token.get("wallets_found"),
+                "timestamp": token.get("analysis_timestamp"),
+                "credits_used": token.get("last_analysis_credits", 0),
+                "results_url": f"/analysis/{token['id']}"
+            })
+
+        if not search:
+            for job in analysis_jobs.values():
+                if job.get("status") != "completed":
+                    jobs.insert(0, job)
+
+        return {"total": len(jobs), "jobs": jobs}
+    except Exception as exc:
+        log_error(f"Failed to list analyses: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/wallets/batch-tags")
+async def get_batch_wallet_tags(payload: BatchTagsRequest):
+    if not payload.addresses:
+        raise HTTPException(status_code=400, detail="addresses array is required")
+    try:
+        return db.get_multi_wallet_tags(payload.addresses)
+    except Exception as exc:
+        log_error(f"Failed to get batch wallet tags: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/tags/{tag}/wallets")
+async def get_wallets_by_tag(tag: str):
+    try:
+        wallets = db.get_wallets_by_tag(tag)
+        return {"tag": tag, "wallets": wallets}
+    except Exception as exc:
+        log_error(f"Failed to get wallets by tag: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 # ============================================================================
 # Analysis Endpoints (Phase 3 Migration)
 # ============================================================================
@@ -755,6 +1217,7 @@ from fastapi.responses import StreamingResponse, FileResponse
 
 # Thread pool for background analysis jobs
 ANALYSIS_EXECUTOR = ThreadPoolExecutor(max_workers=10, thread_name_prefix="analysis")
+WEBHOOK_EXECUTOR = ThreadPoolExecutor(max_workers=5, thread_name_prefix="webhook")
 
 # In-memory job tracking (shared with Flask during migration)
 analysis_jobs: Dict[str, Dict[str, Any]] = {}
@@ -762,24 +1225,6 @@ analysis_jobs: Dict[str, Dict[str, Any]] = {}
 # Analysis results directory
 ANALYSIS_RESULTS_DIR = "analysis_results"
 os.makedirs(ANALYSIS_RESULTS_DIR, exist_ok=True)
-
-# Pydantic models for analysis
-class AnalysisSettings(BaseModel):
-    """API settings for token analysis"""
-    # Use loaded settings from api_settings.json as defaults
-    transactionLimit: int = Field(default=CURRENT_API_SETTINGS["transactionLimit"], ge=1, le=10000)
-    minUsdFilter: float = Field(default=CURRENT_API_SETTINGS["minUsdFilter"], ge=0)
-    walletCount: int = Field(default=CURRENT_API_SETTINGS["walletCount"], ge=1, le=100)
-    apiRateDelay: int = Field(default=CURRENT_API_SETTINGS["apiRateDelay"], ge=0)
-    maxCreditsPerAnalysis: int = Field(default=CURRENT_API_SETTINGS["maxCreditsPerAnalysis"], ge=1, le=10000)
-    maxRetries: int = Field(default=CURRENT_API_SETTINGS["maxRetries"], ge=0, le=10)
-
-class AnalyzeTokenRequest(BaseModel):
-    """Request model for token analysis"""
-    address: str = Field(..., min_length=32, max_length=44, description="Solana token address")
-    api_settings: Optional[AnalysisSettings] = None
-    min_usd: Optional[float] = None
-    time_window_hours: int = Field(default=999999, ge=1)
 
 class AnalysisJob(BaseModel):
     """Analysis job status"""
@@ -912,25 +1357,25 @@ def run_token_analysis_sync(job_id: str, token_address: str, min_usd: float,
 
         print(f"[Job {job_id}] Analysis completed successfully")
 
-        # Send WebSocket notification
+        # Send WebSocket notification via ConnectionManager
         try:
-            notification_payload = {
-                'job_id': job_id,
-                'token_name': token_name,
-                'token_symbol': token_symbol,
-                'acronym': acronym,
-                'wallets_found': len(early_bidders),
-                'token_id': token_id
+            notification_message = {
+                'event': 'analysis_complete',
+                'data': {
+                    'job_id': job_id,
+                    'token_name': token_name,
+                    'token_symbol': token_symbol,
+                    'acronym': acronym,
+                    'wallets_found': len(early_bidders),
+                    'token_id': token_id
+                }
             }
-            response = requests.post(
-                "http://localhost:5002/notify/analysis_complete",
-                json=notification_payload,
-                timeout=2
-            )
-            if response.status_code == 200:
-                print(f"[Job {job_id}] WebSocket notification sent successfully")
-            else:
-                print(f"[Job {job_id}] WebSocket notification failed: {response.status_code}")
+            # Schedule async broadcast from sync context
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(manager.broadcast(notification_message))
+            loop.close()
+            print(f"[Job {job_id}] WebSocket notification broadcasted to {len(manager.active_connections)} clients")
         except Exception as notify_error:
             print(f"[Job {job_id}] Failed to send WebSocket notification: {notify_error}")
 
@@ -952,7 +1397,7 @@ async def analyze_token(request: AnalyzeTokenRequest):
         raise HTTPException(status_code=400, detail="Invalid Solana address format")
 
     # Get settings
-    settings = request.api_settings or AnalysisSettings()
+    settings = request.api_settings or AnalysisSettings(**CURRENT_API_SETTINGS)
     min_usd = request.min_usd if request.min_usd is not None else settings.minUsdFilter
 
     # Create job
@@ -1082,8 +1527,171 @@ async def download_axiom_export(job_id: str):
 
 
 # ============================================================================
+# Webhook Management (parity with Flask)
+# ============================================================================
+
+def _require_helius():
+    if not HELIUS_API_KEY:
+        raise HTTPException(status_code=503, detail="Helius API not available")
+
+
+@app.post("/webhooks/create", status_code=202)
+async def create_webhook(payload: CreateWebhookRequest):
+    _require_helius()
+    token_details = db.get_token_details(payload.token_id)
+    if not token_details:
+        raise HTTPException(status_code=404, detail="Token not found")
+
+    wallets = token_details.get("wallets", [])
+    if not wallets:
+        raise HTTPException(status_code=400, detail="No wallets found for this token")
+
+    wallet_addresses = [w["wallet_address"] for w in wallets]
+    callback_url = payload.webhook_url or "http://localhost:5003/webhooks/callback"
+
+    def worker():
+        try:
+            manager = WebhookManager(HELIUS_API_KEY)
+            result = manager.create_webhook(
+                webhook_url=callback_url,
+                wallet_addresses=wallet_addresses,
+                transaction_types=["TRANSFER", "SWAP"]
+            )
+            webhook_id = result.get("webhookID")
+            print(f"[Webhook] Created webhook {webhook_id} for token {payload.token_id}")
+            return result
+        except Exception as exc:
+            print(f"[Webhook] Error creating webhook: {exc}")
+            return None
+
+    WEBHOOK_EXECUTOR.submit(worker)
+
+    return {
+        "status": "queued",
+        "message": "Webhook creation queued",
+        "token_id": payload.token_id,
+        "wallets_monitored": len(wallet_addresses)
+    }
+
+
+async def _run_webhook_task(func):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(WEBHOOK_EXECUTOR, func)
+
+
+@app.get("/webhooks/list")
+async def list_webhooks():
+    _require_helius()
+
+    def worker():
+        manager = WebhookManager(HELIUS_API_KEY)
+        return manager.list_webhooks()
+
+    try:
+        webhooks = await _run_webhook_task(worker)
+        return {"total": len(webhooks), "webhooks": webhooks}
+    except Exception as exc:
+        print(f"[Webhook] Error listing webhooks: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/webhooks/{webhook_id}")
+async def get_webhook_details(webhook_id: str):
+    _require_helius()
+
+    def worker():
+        manager = WebhookManager(HELIUS_API_KEY)
+        return manager.get_webhook(webhook_id)
+
+    webhook = await _run_webhook_task(worker)
+    if not webhook:
+        raise HTTPException(status_code=404, detail="Webhook not found")
+    return webhook
+
+
+@app.delete("/webhooks/{webhook_id}", status_code=202)
+async def delete_webhook(webhook_id: str):
+    _require_helius()
+
+    def worker():
+        manager = WebhookManager(HELIUS_API_KEY)
+        manager.delete_webhook(webhook_id)
+        print(f"[Webhook] Deleted webhook {webhook_id}")
+
+    WEBHOOK_EXECUTOR.submit(worker)
+    return {"status": "queued", "message": f"Webhook {webhook_id} deletion queued"}
+
+
+@app.post("/webhooks/callback")
+async def webhook_callback(request: Request):
+    """Receive webhook notifications from Helius"""
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    transactions = payload if isinstance(payload, list) else [payload]
+
+    for tx in transactions:
+        signature = tx.get("signature")
+        timestamp = tx.get("timestamp")
+        tx_type = tx.get("type")
+        description = tx.get("description", "")
+        native_transfers = tx.get("nativeTransfers", [])
+        token_transfers = tx.get("tokenTransfers", [])
+
+        for transfer in native_transfers + token_transfers:
+            wallet_address = transfer.get("fromUserAccount") or transfer.get("toUserAccount")
+            if not wallet_address:
+                continue
+
+            if transfer in native_transfers:
+                sol_amount = transfer.get("amount", 0) / 1e9
+                token_amount = 0.0
+                recipient = transfer.get("toUserAccount")
+            else:
+                sol_amount = 0.0
+                token_amount = float(transfer.get("tokenAmount", 0))
+                recipient = transfer.get("toUserAccount")
+
+            try:
+                db.save_wallet_activity(
+                    wallet_address=wallet_address,
+                    transaction_signature=signature,
+                    timestamp=datetime.utcfromtimestamp(timestamp).isoformat() if timestamp else None,
+                    activity_type=tx_type,
+                    description=description,
+                    sol_amount=sol_amount,
+                    token_amount=token_amount,
+                    recipient_address=recipient
+                )
+                print(f"[Webhook] Saved activity for wallet {wallet_address[:8]}...")
+            except Exception as exc:
+                print(f"[Webhook] Failed to save activity: {exc}")
+
+    return {"status": "success", "processed": len(transactions)}
+
+
+# ============================================================================
 # Health Check
 # ============================================================================
+
+@app.get("/")
+async def root():
+    return {
+        "status": "ok",
+        "service": "Gun Del Sol API",
+        "version": "1.0.0",
+        "message": "FastAPI backend for Solana token analysis",
+        "endpoints": {
+            "health": "/health",
+            "tokens": "/api/tokens/history",
+            "analysis": "/analysis",
+            "watchlist": "/addresses",
+            "settings": "/api/settings"
+        }
+    }
+
 
 @app.get("/health")
 async def health_check():
@@ -1092,7 +1700,8 @@ async def health_check():
         "status": "healthy",
         "service": "FastAPI Gun Del Sol",
         "version": "1.0.0",
-        "endpoints": 18  # Updated from 14 to 18 (added 4 analysis endpoints)
+        "endpoints": 21,  # Updated to include WebSocket + notification endpoints
+        "websocket_connections": len(manager.active_connections)
     }
 
 
@@ -1106,7 +1715,8 @@ async def startup_event():
     print("FastAPI Gun Del Sol - Production-Grade Performance")
     print("=" * 80)
     print("[OK] Service started on port 5003")
-    print("[OK] 14 high-priority endpoints loaded")
+    print("[OK] 21 endpoints loaded (REST + WebSocket)")
+    print("[OK] WebSocket support for real-time notifications (/ws)")
     print("[OK] Response caching with ETags (30s TTL + 304 responses)")
     print("[OK] Request deduplication (prevents duplicate concurrent queries)")
     print("[OK] GZip compression (70-90% payload reduction)")
@@ -1119,6 +1729,7 @@ async def startup_event():
     print("  - 304 responses: ~2ms (ETags + If-None-Match)")
     print("  - Concurrent balance refresh: 10x faster than sequential")
     print("  - Heavy load: handles 100+ concurrent requests")
+    print("  - WebSocket notifications: real-time analysis updates")
     print("=" * 80)
 
 

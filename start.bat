@@ -5,17 +5,33 @@ REM Gun Del Sol - Master Launcher
 REM ============================================================================
 REM Starts all Gun Del Sol services:
 REM   1. AutoHotkey action wheel (action_wheel.ahk)
-REM   2. Flask REST API backend (localhost:5001) - JSON API only
-REM   3. FastAPI WebSocket server (localhost:5002) - Real-time notifications
-REM   4. Next.js frontend dashboard (localhost:3000) - Main UI
+REM   2. FastAPI backend (localhost:5003) - REST API + WebSocket
+REM   3. Next.js frontend dashboard (localhost:3000) - Main UI
 REM ============================================================================
 
 REM Kill any existing services (idempotent startup)
 echo Checking for existing services...
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr :3000') do (
+
+REM Kill all existing Gun Del Sol windows by title
+taskkill /FI "WINDOWTITLE eq Gun Del Sol - Backend*" /F >nul 2>nul
+taskkill /FI "WINDOWTITLE eq Gun Del Sol - FastAPI*" /F >nul 2>nul
+taskkill /FI "WINDOWTITLE eq Gun Del Sol - Frontend*" /F >nul 2>nul
+
+REM Also kill by port (fallback for any orphaned processes)
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":3000 " ^| findstr "LISTENING"') do (
+    echo   Killing process on port 3000 (PID: %%a)
     taskkill /F /PID %%a >nul 2>nul
 )
-echo Cleaned up any existing services.
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":5003 " ^| findstr "LISTENING"') do (
+    echo   Killing process on port 5003 (PID: %%a)
+    taskkill /F /PID %%a >nul 2>nul
+)
+
+echo Cleaned up all existing services.
+
+REM Wait for ports to be fully released (prevents "address already in use" errors)
+echo Waiting for ports to release...
+timeout /t 3 /nobreak >nul
 echo.
 
 echo ============================================================================
@@ -33,13 +49,11 @@ if exist "%~dp0action_wheel.ahk" (
 )
 echo.
 
-REM Launch Backend API (includes WebSocket server and FastAPI)
-echo [2/3] Starting backend services...
+REM Launch Backend API (FastAPI with integrated WebSocket)
+echo [2/3] Starting FastAPI backend...
 if exist "%~dp0start_backend.bat" (
     start "Gun Del Sol - Backend" /D "%~dp0" cmd /k start_backend.bat
-    echo       Started: Flask API ^(localhost:5001^) - Legacy/Analysis
-    echo       Started: FastAPI ^(localhost:5003^) - Primary API
-    echo       Started: WebSocket Server ^(localhost:5002^) - Notifications
+    echo       Started: FastAPI ^(localhost:5003^) - REST API + WebSocket
 ) else (
     echo       WARNING: start_backend.bat not found
 )
@@ -59,15 +73,15 @@ echo ===========================================================================
 echo All services started!
 echo ============================================================================
 echo.
-echo Action Wheel:       Running in background
-echo FastAPI ^(Primary^):  http://localhost:5003 ^(High-performance API^)
-echo Flask API ^(Legacy^):  http://localhost:5001 ^(Analysis jobs^)
-echo WebSocket Server:   http://localhost:5002 ^(Real-time notifications^)
-echo Frontend Dashboard: http://localhost:3000 ^(Main UI^)
+echo Action Wheel:            Running in background
+echo FastAPI Backend:         http://localhost:5003
+echo   - REST API:            http://localhost:5003/health
+echo   - WebSocket:           ws://localhost:5003/ws
+echo Frontend Dashboard:      http://localhost:3000
 echo.
 echo NOTE: Access the dashboard at http://localhost:3000
-echo       FastAPI serves all frontend requests for better performance
-echo       Flask API handles token analysis jobs
+echo       FastAPI handles all API requests and real-time notifications
+echo       WebSocket support integrated for instant analysis updates
 echo.
 echo Close the individual windows to stop each service.
 echo ============================================================================

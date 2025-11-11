@@ -1,26 +1,29 @@
 @echo off
-title Gun Del Sol - Backend
+title Gun Del Sol - FastAPI Backend
 REM ============================================================================
-REM Gun Del Sol - Backend REST API Launcher
+REM Gun Del Sol - FastAPI Backend Launcher
 REM ============================================================================
-REM Starts the Flask REST API service (pure JSON API, no HTML dashboard)
+REM Starts the FastAPI service (REST API + WebSocket notifications)
 REM Provides endpoints for token analysis, wallet tagging, and data management
+REM Real-time WebSocket notifications for analysis completion
 REM Use the Next.js frontend at localhost:3000 for the user interface
 REM ============================================================================
 
-REM Kill any existing backend services (idempotent startup)
+REM NOTE: Port cleanup is handled by start.bat before launching this script
+REM This script can be run standalone, so we also cleanup here as a fallback
 echo Checking for existing backend services...
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr :5001') do (
-    taskkill /F /PID %%a >nul 2>nul
-)
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr :5002') do (
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":5003 " ^| findstr "LISTENING"') do (
+    echo   Killing FastAPI on port 5003 (PID: %%a)
     taskkill /F /PID %%a >nul 2>nul
 )
 echo Cleaned up any existing services.
+
+REM Wait longer for ports to be fully released (prevents "address already in use" errors)
+echo Waiting for ports to release...
+timeout /t 3 /nobreak >nul
 echo.
 
 set SCRIPT_DIR=%~dp0backend\
-set PYTHON_SCRIPT=%SCRIPT_DIR%api_service.py
 
 REM Check if Python is installed
 where python >nul 2>nul
@@ -32,49 +35,6 @@ if %ERRORLEVEL% NEQ 0 (
     echo.
     pause
     exit /b 1
-)
-
-REM Check if script exists
-if not exist "%PYTHON_SCRIPT%" (
-    echo ERROR: Cannot find api_service.py
-    echo Expected location: %PYTHON_SCRIPT%
-    echo.
-    pause
-    exit /b 1
-)
-
-REM Check if Flask and flask-cors are installed
-python -c "import flask" 2>nul
-if %ERRORLEVEL% NEQ 0 (
-    echo Flask is not installed. Installing dependencies...
-    echo.
-    python -m pip install -r "%SCRIPT_DIR%requirements.txt"
-    if %ERRORLEVEL% NEQ 0 (
-        echo.
-        echo ERROR: Failed to install dependencies
-        echo Please manually run: pip install -r requirements.txt
-        echo.
-        pause
-        exit /b 1
-    )
-)
-
-python -c "import flask_cors" 2>nul
-if %ERRORLEVEL% NEQ 0 (
-    echo flask-cors is not installed. Installing dependencies...
-    echo.
-    python -m pip install -r "%SCRIPT_DIR%requirements.txt"
-    if %ERRORLEVEL% NEQ 0 (
-        echo.
-        echo ERROR: Failed to install flask-cors
-        echo Please manually run: pip install flask-cors
-        echo.
-        pause
-        exit /b 1
-    ) else (
-        echo Dependencies installed successfully.
-        echo.
-    )
 )
 
 REM Check if FastAPI is installed
@@ -171,35 +131,39 @@ if %ERRORLEVEL% NEQ 0 (
     )
 )
 
-REM Start the WebSocket server in background
+REM Start the FastAPI service (now includes WebSocket support)
 echo.
-echo Starting WebSocket notification server...
-start "Gun Del Sol - WebSocket Server" python "%SCRIPT_DIR%websocket_server.py"
-echo WebSocket server started on port 5002
-timeout /t 2 /nobreak >nul
+echo Starting FastAPI service (REST + WebSocket)...
+echo [DEBUG] Window will pause on error - check for error messages
+start "Gun Del Sol - FastAPI" cmd /k "cd /d "%SCRIPT_DIR%" && python -m uvicorn fastapi_main:app --port 5003"
+echo Waiting for FastAPI to start...
+timeout /t 3 /nobreak >nul
 
-REM Start the FastAPI service in background (high-priority endpoints)
+REM Verify FastAPI started successfully
+curl -s http://localhost:5003/health >nul 2>&1
+if %ERRORLEVEL% EQU 0 (
+    echo [OK] FastAPI server started successfully on port 5003
+) else (
+    echo [WARNING] FastAPI may not have started - check the FastAPI window for errors
+    echo            If the window closed immediately, there may be missing dependencies
+    echo            Run: pip install -r "%SCRIPT_DIR%requirements.txt"
+)
 echo.
-echo Starting FastAPI service (high-performance endpoints)...
-start "Gun Del Sol - FastAPI" python -m uvicorn fastapi_main:app --port 5003 --app-dir "%SCRIPT_DIR%"
-echo FastAPI server started on port 5003
-timeout /t 2 /nobreak >nul
 
-REM Start the Flask API service
+REM Keep FastAPI running in foreground
 echo.
-echo Starting Gun Del Sol REST API Service...
+echo ============================================================================
+echo Gun Del Sol Backend - FastAPI Service Running
+echo ============================================================================
 echo.
-echo Flask API (legacy):  http://localhost:5001
-echo FastAPI (primary):  http://localhost:5003
-echo WebSocket Server:   http://localhost:5002
-echo Frontend Dashboard: http://localhost:3000
+echo FastAPI (REST + WebSocket): http://localhost:5003
+echo WebSocket endpoint:         ws://localhost:5003/ws
+echo Health check:               http://localhost:5003/health
+echo Frontend Dashboard:         http://localhost:3000
 echo.
-echo NOTE: Frontend uses FastAPI (port 5003) for better performance
-echo       Flask API remains available for analysis jobs
+echo ============================================================================
 echo.
-python "%PYTHON_SCRIPT%"
-
-REM If we get here, the service was stopped
+echo Press Ctrl+C to stop the backend service
+echo The FastAPI window will remain open until you close it
 echo.
-echo Backend service stopped.
 pause
