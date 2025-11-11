@@ -40,8 +40,67 @@ import httpx
 
 # Import existing modules
 import analyzed_tokens_db as db
-from helius_api import TokenAnalyzer
+from helius_api import TokenAnalyzer, generate_axiom_export, generate_token_acronym
 import requests
+import json
+
+# ============================================================================
+# Configuration & API Key Loading
+# ============================================================================
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+def load_api_key() -> Optional[str]:
+    """Load Helius API key from environment or config file"""
+    # Try environment variable first
+    api_key = os.environ.get('HELIUS_API_KEY')
+    if api_key:
+        return api_key
+
+    # Try config.json (look in the backend directory where this script is located)
+    config_file = os.path.join(SCRIPT_DIR, 'config.json')
+    if os.path.exists(config_file):
+        try:
+            with open(config_file, 'r') as f:
+                config = json.load(f)
+                return config.get('helius_api_key')
+        except Exception as e:
+            print(f"[Config] Error reading config.json: {e}")
+
+    return None
+
+HELIUS_API_KEY = load_api_key()
+if not HELIUS_API_KEY:
+    raise RuntimeError("HELIUS_API_KEY not set. Add it to environment variable or backend/config.json")
+
+print(f"[Config] Loaded Helius API key: {HELIUS_API_KEY[:8]}..." if HELIUS_API_KEY else "[Config] No API key loaded")
+
+# Load API settings from file (same as Flask)
+SETTINGS_FILE = os.path.join(SCRIPT_DIR, 'api_settings.json')
+DEFAULT_API_SETTINGS = {
+    "transactionLimit": 500,
+    "minUsdFilter": 50.0,
+    "walletCount": 10,
+    "apiRateDelay": 100,
+    "maxCreditsPerAnalysis": 1000,
+    "maxRetries": 3
+}
+
+def load_api_settings() -> dict:
+    """Load API settings from file, fallback to defaults"""
+    if os.path.exists(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE, 'r') as f:
+                data = json.load(f)
+                # Merge with defaults (file values override defaults)
+                return {**DEFAULT_API_SETTINGS, **data}
+        except Exception as e:
+            print(f"[Config] Error reading api_settings.json: {e}")
+            return DEFAULT_API_SETTINGS.copy()
+    return DEFAULT_API_SETTINGS.copy()
+
+CURRENT_API_SETTINGS = load_api_settings()
+print(f"[Config] API Settings: walletCount={CURRENT_API_SETTINGS['walletCount']}, transactionLimit={CURRENT_API_SETTINGS['transactionLimit']}, maxCredits={CURRENT_API_SETTINGS['maxCreditsPerAnalysis']}")
 
 # ============================================================================
 # FastAPI App Configuration
@@ -135,7 +194,9 @@ class RemoveTagRequest(BaseModel):
 # Database Helper (Async)
 # ============================================================================
 
-DB_PATH = "analyzed_tokens.db"
+# Use absolute path to ensure we're using the correct database file
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(SCRIPT_DIR, "analyzed_tokens.db")
 
 def get_db():
     """Get async database connection context manager"""
@@ -300,6 +361,34 @@ async def get_tokens_history(request: Request, response: Response):
     return result
 
 
+@app.get("/api/tokens/trash")
+async def get_deleted_tokens():
+    """Get all soft-deleted tokens"""
+    async with aiosqlite.connect(DB_PATH) as conn:
+        conn.row_factory = aiosqlite.Row
+
+        query = """
+            SELECT
+                t.*, COUNT(DISTINCT ebw.wallet_address) as wallets_found
+            FROM analyzed_tokens t
+            LEFT JOIN early_buyer_wallets ebw ON ebw.token_id = t.id
+            WHERE t.deleted_at IS NOT NULL
+            GROUP BY t.id
+            ORDER BY t.deleted_at DESC
+        """
+
+        cursor = await conn.execute(query)
+        rows = await cursor.fetchall()
+
+        tokens = [dict(row) for row in rows]
+
+        return {
+            "total": len(tokens),
+            "total_wallets": sum(t.get('wallets_found', 0) for t in tokens),
+            "tokens": tokens
+        }
+
+
 @app.get("/api/tokens/{token_id}")
 async def get_token_by_id(token_id: int):
     """Get token details with wallets and axiom export"""
@@ -422,34 +511,6 @@ async def permanent_delete_token(token_id: int):
 
     cache.invalidate("tokens")
     return {"message": "Token permanently deleted"}
-
-
-@app.get("/api/tokens/trash")
-async def get_deleted_tokens():
-    """Get all soft-deleted tokens"""
-    async with aiosqlite.connect(DB_PATH) as conn:
-        conn.row_factory = aiosqlite.Row
-
-        query = """
-            SELECT
-                t.*, COUNT(DISTINCT tw.wallet_address) as wallets_found
-            FROM analyzed_tokens t
-            LEFT JOIN early_buyer_wallets ebw ON ebw.token_id = t.id
-            WHERE t.deleted_at IS NOT NULL
-            GROUP BY t.id
-            ORDER BY t.deleted_at DESC
-        """
-
-        cursor = await conn.execute(query)
-        rows = await cursor.fetchall()
-
-        tokens = [dict(row) for row in rows]
-
-        return {
-            "total": len(tokens),
-            "total_wallets": sum(t.get('wallets_found', 0) for t in tokens),
-            "tokens": tokens
-        }
 
 
 # ============================================================================
@@ -682,6 +743,345 @@ async def get_codex():
 
 
 # ============================================================================
+# Analysis Endpoints (Phase 3 Migration)
+# ============================================================================
+
+import uuid
+import json
+import io
+import csv
+from concurrent.futures import ThreadPoolExecutor
+from fastapi.responses import StreamingResponse, FileResponse
+
+# Thread pool for background analysis jobs
+ANALYSIS_EXECUTOR = ThreadPoolExecutor(max_workers=10, thread_name_prefix="analysis")
+
+# In-memory job tracking (shared with Flask during migration)
+analysis_jobs: Dict[str, Dict[str, Any]] = {}
+
+# Analysis results directory
+ANALYSIS_RESULTS_DIR = "analysis_results"
+os.makedirs(ANALYSIS_RESULTS_DIR, exist_ok=True)
+
+# Pydantic models for analysis
+class AnalysisSettings(BaseModel):
+    """API settings for token analysis"""
+    # Use loaded settings from api_settings.json as defaults
+    transactionLimit: int = Field(default=CURRENT_API_SETTINGS["transactionLimit"], ge=1, le=10000)
+    minUsdFilter: float = Field(default=CURRENT_API_SETTINGS["minUsdFilter"], ge=0)
+    walletCount: int = Field(default=CURRENT_API_SETTINGS["walletCount"], ge=1, le=100)
+    apiRateDelay: int = Field(default=CURRENT_API_SETTINGS["apiRateDelay"], ge=0)
+    maxCreditsPerAnalysis: int = Field(default=CURRENT_API_SETTINGS["maxCreditsPerAnalysis"], ge=1, le=10000)
+    maxRetries: int = Field(default=CURRENT_API_SETTINGS["maxRetries"], ge=0, le=10)
+
+class AnalyzeTokenRequest(BaseModel):
+    """Request model for token analysis"""
+    address: str = Field(..., min_length=32, max_length=44, description="Solana token address")
+    api_settings: Optional[AnalysisSettings] = None
+    min_usd: Optional[float] = None
+    time_window_hours: int = Field(default=999999, ge=1)
+
+class AnalysisJob(BaseModel):
+    """Analysis job status"""
+    job_id: str
+    token_address: str
+    status: str  # queued, processing, completed, failed
+    created_at: str
+    result: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    axiom_file: Optional[str] = None
+    result_file: Optional[str] = None
+
+def is_valid_solana_address(address: str) -> bool:
+    """Validate Solana address format"""
+    if not address or not isinstance(address, str):
+        return False
+    if len(address) < 32 or len(address) > 44:
+        return False
+    # Base58 characters only (no 0, O, I, l)
+    valid_chars = set("123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz")
+    return all(c in valid_chars for c in address)
+
+def run_token_analysis_sync(job_id: str, token_address: str, min_usd: float,
+                            time_window_hours: int, max_transactions: int,
+                            max_credits: int, max_wallets: int):
+    """Synchronous worker function for background thread pool"""
+    try:
+        from helius_api import TokenAnalyzer
+        import os
+
+        token_display = f"{token_address[:4]}...{token_address[-4:]}" if len(token_address) >= 12 else "****"
+        print(f"[Job {job_id}] Starting analysis for {token_display}")
+        analysis_jobs[job_id]['status'] = 'processing'
+
+        # Use globally loaded Helius API key
+        analyzer = TokenAnalyzer(HELIUS_API_KEY)
+
+        result = analyzer.analyze_token(
+            mint_address=token_address,
+            min_usd=min_usd,
+            time_window_hours=time_window_hours,
+            max_transactions=max_transactions,
+            max_credits=max_credits,
+            max_wallets_to_store=max_wallets
+        )
+
+        # Extract token info
+        token_info = result.get('token_info')
+        if token_info is None:
+            token_name = 'Unknown'
+            token_symbol = 'UNK'
+        else:
+            metadata = token_info.get('onChainMetadata', {}).get('metadata', {})
+            token_name = metadata.get('name', 'Unknown')
+            token_symbol = metadata.get('symbol', 'UNK')
+
+        # Check if analysis found any meaningful data
+        early_bidders = result.get('early_bidders', [])
+        if len(early_bidders) == 0 and token_info is None:
+            # Analysis failed - no transactions found, don't save to avoid overwriting existing data
+            print(f"[Job {job_id}] Analysis found no data - skipping database save to preserve existing records")
+            analysis_jobs[job_id].update({
+                'status': 'completed',
+                'result': result,
+                'error': result.get('error', 'No transactions found')
+            })
+            print(f"[Job {job_id}] Analysis completed (no data found)")
+            return
+
+        # Generate acronym (using imported function from helius_api)
+        acronym = generate_token_acronym(token_name, token_symbol)
+
+        # Convert datetime objects to strings
+        for bidder in early_bidders:
+            if 'first_buy_time' in bidder and hasattr(bidder['first_buy_time'], 'isoformat'):
+                bidder['first_buy_time'] = bidder['first_buy_time'].isoformat()
+
+        # Generate Axiom export first (needed for save_analyzed_token)
+        axiom_export = generate_axiom_export(
+            early_bidders=early_bidders,
+            token_name=token_name,
+            token_symbol=token_symbol,
+            limit=max_wallets
+        )
+
+        # Save to database - use correct field names from analyzer result
+        token_id = db.save_analyzed_token(
+            token_address=token_address,
+            token_name=token_name,
+            token_symbol=token_symbol,
+            acronym=acronym,
+            early_bidders=early_bidders,
+            axiom_json=axiom_export,
+            first_buy_timestamp=result.get('first_transaction_time'),  # Correct field name
+            credits_used=result.get('api_credits_used', 0),  # Correct field name
+            max_wallets=max_wallets
+        )
+        print(f"[Job {job_id}] Saved to database (ID: {token_id})")
+
+        # Get file paths using database utility functions (matches Flask)
+        analysis_filepath = db.get_analysis_file_path(token_id, token_name, in_trash=False)
+        axiom_filepath = db.get_axiom_file_path(token_id, acronym, in_trash=False)
+
+        # Ensure directories exist
+        os.makedirs(os.path.dirname(analysis_filepath), exist_ok=True)
+        os.makedirs(os.path.dirname(axiom_filepath), exist_ok=True)
+
+        # Save analysis results file
+        with open(analysis_filepath, 'w') as f:
+            json.dump(result, f, indent=2)
+
+        # Save Axiom export file
+        with open(axiom_filepath, 'w') as f:
+            json.dump(axiom_export, f, indent=2)
+
+        # Update database with file paths
+        db.update_token_file_paths(token_id, analysis_filepath, axiom_filepath)
+
+        # Store result filename for backwards compatibility
+        result_filename = os.path.basename(analysis_filepath)
+
+        # Update job with results
+        analysis_jobs[job_id].update({
+            'status': 'completed',
+            'result': result,
+            'result_file': result_filename,
+            'axiom_file': axiom_filepath,
+            'token_id': token_id
+        })
+
+        print(f"[Job {job_id}] Analysis completed successfully")
+
+        # Send WebSocket notification
+        try:
+            notification_payload = {
+                'job_id': job_id,
+                'token_name': token_name,
+                'token_symbol': token_symbol,
+                'acronym': acronym,
+                'wallets_found': len(early_bidders),
+                'token_id': token_id
+            }
+            response = requests.post(
+                "http://localhost:5002/notify/analysis_complete",
+                json=notification_payload,
+                timeout=2
+            )
+            if response.status_code == 200:
+                print(f"[Job {job_id}] WebSocket notification sent successfully")
+            else:
+                print(f"[Job {job_id}] WebSocket notification failed: {response.status_code}")
+        except Exception as notify_error:
+            print(f"[Job {job_id}] Failed to send WebSocket notification: {notify_error}")
+
+    except Exception as e:
+        print(f"[Job {job_id}] Analysis failed: {e}")
+        analysis_jobs[job_id].update({
+            'status': 'failed',
+            'error': str(e)
+        })
+
+@app.post("/analyze/token", status_code=202)
+async def analyze_token(request: AnalyzeTokenRequest):
+    """
+    Analyze a token to find early bidders
+    Returns job ID immediately, analysis runs in background
+    """
+    # Validate address
+    if not is_valid_solana_address(request.address):
+        raise HTTPException(status_code=400, detail="Invalid Solana address format")
+
+    # Get settings
+    settings = request.api_settings or AnalysisSettings()
+    min_usd = request.min_usd if request.min_usd is not None else settings.minUsdFilter
+
+    # Create job
+    job_id = str(uuid.uuid4())[:8]
+    analysis_jobs[job_id] = {
+        'job_id': job_id,
+        'token_address': request.address,
+        'status': 'queued',
+        'min_usd': min_usd,
+        'time_window_hours': request.time_window_hours,
+        'transaction_limit': settings.transactionLimit,
+        'max_wallets': settings.walletCount,
+        'max_credits': settings.maxCreditsPerAnalysis,
+        'created_at': datetime.now().isoformat(),
+        'result': None,
+        'error': None
+    }
+
+    # Submit to thread pool
+    ANALYSIS_EXECUTOR.submit(
+        run_token_analysis_sync,
+        job_id,
+        request.address,
+        min_usd,
+        request.time_window_hours,
+        settings.transactionLimit,
+        settings.maxCreditsPerAnalysis,
+        settings.walletCount
+    )
+
+    token_display = f"{request.address[:4]}...{request.address[-4:]}" if len(request.address) >= 12 else "****"
+    print(f"[OK] Queued token analysis: {token_display} (Job ID: {job_id})")
+
+    return {
+        'status': 'queued',
+        'job_id': job_id,
+        'token_address': request.address,
+        'api_settings': {
+            'min_usd': min_usd,
+            'transaction_limit': settings.transactionLimit,
+            'max_wallets': settings.walletCount,
+            'time_window_hours': request.time_window_hours
+        },
+        'results_url': f'/analysis/{job_id}'
+    }
+
+@app.get("/analysis/{job_id}")
+async def get_analysis(job_id: str):
+    """Get analysis job status and results"""
+    if job_id not in analysis_jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job = analysis_jobs[job_id].copy()
+
+    # If completed, load result from file if not in memory
+    if job['status'] == 'completed' and job.get('result') is None:
+        try:
+            if 'result_file' in job:
+                result_file = os.path.join(ANALYSIS_RESULTS_DIR, job['result_file'])
+                if os.path.exists(result_file):
+                    with open(result_file, 'r') as f:
+                        job['result'] = json.load(f)
+        except Exception as e:
+            job['status'] = 'failed'
+            job['error'] = f"Could not load results: {str(e)}"
+
+    return job
+
+@app.get("/analysis/{job_id}/csv")
+async def export_analysis_csv(job_id: str):
+    """Export analysis results as CSV"""
+    if job_id not in analysis_jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job = analysis_jobs[job_id]
+
+    if job['status'] != 'completed' or not job.get('result'):
+        raise HTTPException(status_code=400, detail="Analysis not completed or no results")
+
+    # Create CSV in memory
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    # Write header
+    writer.writerow(['Wallet Address', 'First Buy Time', 'Total USD', 'Transaction Count', 'Average Buy USD'])
+
+    # Write data
+    for bidder in job['result'].get('early_bidders', []):
+        writer.writerow([
+            bidder['wallet_address'],
+            bidder.get('first_buy_time', ''),
+            f"${bidder.get('total_usd', 0):.2f}",
+            bidder.get('transaction_count', 0),
+            f"${bidder.get('average_buy_usd', 0):.2f}"
+        ])
+
+    # Return as streaming response
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f"attachment; filename=token_analysis_{job_id}.csv"
+        }
+    )
+
+@app.get("/analysis/{job_id}/axiom")
+async def download_axiom_export(job_id: str):
+    """Download Axiom wallet tracker JSON"""
+    if job_id not in analysis_jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job = analysis_jobs[job_id]
+
+    if job['status'] != 'completed' or not job.get('axiom_file'):
+        raise HTTPException(status_code=400, detail="Analysis not completed or Axiom export not available")
+
+    axiom_filepath = job['axiom_file']
+    if not os.path.exists(axiom_filepath):
+        raise HTTPException(status_code=404, detail="Axiom export file not found")
+
+    return FileResponse(
+        axiom_filepath,
+        media_type="application/json",
+        filename=os.path.basename(axiom_filepath)
+    )
+
+
+# ============================================================================
 # Health Check
 # ============================================================================
 
@@ -692,7 +1092,7 @@ async def health_check():
         "status": "healthy",
         "service": "FastAPI Gun Del Sol",
         "version": "1.0.0",
-        "endpoints": 14
+        "endpoints": 18  # Updated from 14 to 18 (added 4 analysis endpoints)
     }
 
 
