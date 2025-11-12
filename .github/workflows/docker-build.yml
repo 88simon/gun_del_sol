@@ -66,11 +66,13 @@ jobs:
 
       # Build Docker image (and push if on main)
       - name: Build and push Docker image
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
           push: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+          load: ${{ github.event_name == 'pull_request' || github.ref != 'refs/heads/main' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
@@ -86,13 +88,16 @@ jobs:
           echo '{"walletCount": 5, "concurrentAnalysis": 3}' > test-backend/api_settings.json
           echo '[]' > test-backend/monitored_addresses.json
 
+          # use the first tag from metadata (will be loaded locally if not pushed)
+          IMAGE_TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -n1)
+
           # Run container in background
           docker run -d --name test-backend \
             -p 5003:5003 \
             -v $(pwd)/test-backend/config.json:/app/config.json:ro \
             -v $(pwd)/test-backend/api_settings.json:/app/api_settings.json:ro \
             -v $(pwd)/test-backend/monitored_addresses.json:/app/monitored_addresses.json:ro \
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${IMAGE_TAG}
 
           # Wait for service to be healthy
           echo "Waiting for service to start..."
@@ -115,15 +120,15 @@ jobs:
 
       # Generate SBOM (Software Bill of Materials)
       - name: Generate SBOM
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: anchore/sbom-action@v0
         with:
-          image: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          image: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest
           format: spdx-json
           output-file: sbom.spdx.json
 
       - name: Upload SBOM artifact
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v4
         with:
           name: sbom
@@ -132,15 +137,15 @@ jobs:
 
       # Optional: Scan image for vulnerabilities with Trivy
       - name: Run Trivy vulnerability scanner
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          image-ref: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest
           format: 'sarif'
           output: 'trivy-results.sarif'
 
       - name: Upload Trivy results to GitHub Security
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: 'trivy-results.sarif'
