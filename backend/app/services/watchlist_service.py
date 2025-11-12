@@ -30,7 +30,6 @@ class WatchlistService:
 
     def load_addresses(self):
         """Load monitored addresses from JSON file"""
-        global monitored_addresses
         if os.path.exists(settings.DATA_FILE):
             try:
                 with open(settings.DATA_FILE, "r") as f:

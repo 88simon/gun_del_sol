@@ -97,8 +97,6 @@ async def update_api_settings(payload: UpdateSettingsRequest):
     Returns:
         Updated settings
     """
-    global CURRENT_API_SETTINGS
-
     updates = {k: v for k, v in payload.dict(exclude_unset=True).items()}
     if not updates:
         return {"status": "noop", "settings": CURRENT_API_SETTINGS}
