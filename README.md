@@ -1,9 +1,14 @@
 # Gun Del Sol
 
-[![CI](https://github.com/YOUR_USERNAME/YOUR_REPO/workflows/CI/badge.svg)](https://github.com/YOUR_USERNAME/YOUR_REPO/actions)
-[![Backend CI](https://github.com/YOUR_USERNAME/YOUR_REPO/workflows/Backend%20CI/badge.svg)](https://github.com/YOUR_USERNAME/YOUR_REPO/actions)
+[![CI](https://github.com/88simon/solscan_hotkey/workflows/CI/badge.svg)](https://github.com/88simon/solscan_hotkey/actions)
+[![Backend CI](https://github.com/88simon/solscan_hotkey/workflows/Backend%20CI/badge.svg)](https://github.com/88simon/solscan_hotkey/actions)
+[![OpenAPI Schema](https://github.com/88simon/solscan_hotkey/workflows/OpenAPI%20Schema%20Export/badge.svg)](https://github.com/88simon/solscan_hotkey/actions)
+[![codecov](https://codecov.io/gh/88simon/solscan_hotkey/branch/main/graph/badge.svg)](https://codecov.io/gh/88simon/solscan_hotkey)
+[![Python Version](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)](https://www.python.org/downloads/)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![Imports: isort](https://img.shields.io/badge/%20imports-isort-%231674b1?style=flat&labelColor=ef8336)](https://pycqa.github.io/isort/)
 
-> **Note:** Replace `YOUR_USERNAME/YOUR_REPO` with your actual GitHub username and repository name.
+> **Note:** Update these badge URLs if the repository slug ever changes.
 
 Gun Del Sol pairs an AutoHotkey action wheel with a local Solana intelligence backend. One hand stays on the mouse while the backend handles watchlists, Helius-powered analysis, CSV exports, and WebSocket notifications for the Next.js dashboard.
 
@@ -51,6 +56,40 @@ Gun Del Sol pairs an AutoHotkey action wheel with a local Solana intelligence ba
 2. Copy `backend/config.example.json` to `backend/config.json`, set `helius_api_key`, and tune default thresholds if needed.
 3. Start everything with `start.bat`, or run `start_backend.bat` and `start_frontend.bat` separately. The frontend expects the companion repo at `../gun-del-sol-web`.
 4. Open http://localhost:3000 for the dashboard, http://localhost:5003 for the REST API health check. WebSocket connections use the same port at `ws://localhost:5003/ws`.
+
+### Docker Setup (Alternative)
+
+Run the backend in a containerized environment for consistent, reproducible deployments:
+
+```bash
+# 1. Create required config files
+cp backend/config.example.json backend/config.json
+# Edit backend/config.json with your Helius API key
+
+echo '{"walletCount": 5, "concurrentAnalysis": 3}' > backend/api_settings.json
+echo '[]' > backend/monitored_addresses.json
+
+# 2. Build and run with Docker Compose
+docker-compose up -d
+
+# 3. View logs
+docker-compose logs -f backend
+
+# 4. Stop services
+docker-compose down
+```
+
+**Manual Docker build:**
+```bash
+docker build -t gun-del-sol-backend .
+docker run -d -p 5003:5003 \
+  -v $(pwd)/backend/config.json:/app/config.json:ro \
+  -v $(pwd)/backend/api_settings.json:/app/api_settings.json:ro \
+  -v $(pwd)/backend/monitored_addresses.json:/app/monitored_addresses.json:ro \
+  gun-del-sol-backend
+```
+
+The Docker image is automatically built and tested via GitHub Actions on every push to `main`.
 
 ## Wheel Menu
 
