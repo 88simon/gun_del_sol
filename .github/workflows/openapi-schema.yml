@@ -99,6 +99,7 @@ jobs:
             const paths = Object.keys(newSchema.paths || {});
             const endpoints = paths.length;
 
+            const endpointList = paths.map(p => `- \`${p}\``).join('\n');
             const comment = `### OpenAPI Schema Changes
 
 **Endpoints:** ${endpoints}
@@ -107,7 +108,7 @@ jobs:
 <details>
 <summary>Available endpoints</summary>
 
-${paths.map(p => \`- \\\`\${p}\\\`\`).join('\\n')}
+${endpointList}
 </details>
 
 The OpenAPI schema has been exported and is available as a build artifact.`;
