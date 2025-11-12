@@ -127,6 +127,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: export-schema
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+      pull-requests: write
 
     steps:
       - name: Checkout code
