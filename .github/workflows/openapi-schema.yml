@@ -100,18 +100,20 @@ jobs:
             const endpoints = paths.length;
 
             const endpointList = paths.map(p => `- \`${p}\``).join('\n');
-            const comment = `### OpenAPI Schema Changes
-
-**Endpoints:** ${endpoints}
-**Version:** ${newSchema.info?.version || 'unknown'}
-
-<details>
-<summary>Available endpoints</summary>
-
-${endpointList}
-</details>
-
-The OpenAPI schema has been exported and is available as a build artifact.`;
+            const comment = [
+              '### OpenAPI Schema Changes',
+              '',
+              `**Endpoints:** ${endpoints}`,
+              `**Version:** ${newSchema.info?.version || 'unknown'}`,
+              '',
+              '<details>',
+              '<summary>Available endpoints</summary>',
+              '',
+              endpointList,
+              '</details>',
+              '',
+              'The OpenAPI schema has been exported and is available as a build artifact.'
+            ].join('\n');
 
             github.rest.issues.createComment({
               issue_number: context.issue.number,

@@ -102,7 +102,7 @@ jobs:
           # Wait for service to be healthy
           echo "Waiting for service to start..."
           for i in {1..30}; do
-            if docker exec test-backend wget -q -O- http://localhost:5003/api/settings > /dev/null 2>&1; then
+            if docker exec test-backend python -c "import urllib.request; urllib.request.urlopen('http://localhost:5003/api/settings').read()" > /dev/null 2>&1; then
               echo "Service is healthy!"
               break
             fi
@@ -112,7 +112,7 @@ jobs:
 
           # Check if service is running
           docker logs test-backend
-          docker exec test-backend wget -q -O- http://localhost:5003/api/settings || exit 1
+          docker exec test-backend python -c "import urllib.request; urllib.request.urlopen('http://localhost:5003/api/settings').read()" || exit 1
 
           # Cleanup
           docker stop test-backend
