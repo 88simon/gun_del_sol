@@ -53,7 +53,7 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             # Tag with commit SHA
-            type=sha,prefix={{branch}}-
+            type=sha
 
       # Build Docker image (and push if on main)
       - name: Build and push Docker image
