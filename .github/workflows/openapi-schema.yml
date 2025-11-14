@@ -200,13 +200,15 @@ jobs:
         if: env.backend_has_changes == 'true'
         working-directory: backend-repo
         env:
-          GH_TOKEN: ${{ github.token }}
+          # Note: If FRONTEND_SYNC_TOKEN is not set, this will fail
+          # but the workflow will continue and types will still be synced to frontend
+          GH_TOKEN: ${{ secrets.FRONTEND_SYNC_TOKEN || github.token }}
         run: |
           gh pr create \
             --title "chore: update generated TypeScript types" \
             --body "Auto-generated TypeScript types from OpenAPI schema (commit ${{ github.sha }})" \
             --base main \
-            --head "${{ env.backend_branch_name }}"
+            --head "${{ env.backend_branch_name }}" || echo "⚠️ Failed to create PR (token may lack permissions)"
 
       - name: Commit types to frontend repo
         working-directory: frontend-repo
