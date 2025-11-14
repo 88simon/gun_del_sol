@@ -222,7 +222,7 @@ jobs:
 
             # Commit and push to new branch
             git commit -m "chore: update API types from backend OpenAPI schema" -m "Auto-generated from backend commit ${{ github.sha }}"
-            git push origin "$BRANCH_NAME"
+            HUSKY=0 git push origin "$BRANCH_NAME"
 
             echo "has_changes=true" >> $GITHUB_ENV
             echo "branch_name=$BRANCH_NAME" >> $GITHUB_ENV
