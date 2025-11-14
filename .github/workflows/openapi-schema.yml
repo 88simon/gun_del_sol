@@ -166,7 +166,23 @@ jobs:
       - name: Generate TypeScript types
         run: |
           npx openapi-typescript backend-repo/backend/openapi.json -o backend-repo/backend/api-types.ts
+
+          # Add backend commit SHA as header comment for version tracking
+          BACKEND_SHA="${{ github.sha }}"
+          TEMP_FILE="backend-repo/backend/api-types.tmp"
+
+          echo "/**" > "$TEMP_FILE"
+          echo " * Auto-generated TypeScript types from Backend OpenAPI schema" >> "$TEMP_FILE"
+          echo " * Backend Commit: $BACKEND_SHA" >> "$TEMP_FILE"
+          echo " * Generated: $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> "$TEMP_FILE"
+          echo " * DO NOT EDIT - This file is auto-generated" >> "$TEMP_FILE"
+          echo " */" >> "$TEMP_FILE"
+          echo "" >> "$TEMP_FILE"
+          cat backend-repo/backend/api-types.ts >> "$TEMP_FILE"
+          mv "$TEMP_FILE" backend-repo/backend/api-types.ts
+
           echo "TypeScript types generated successfully!"
+          echo "Backend commit: $BACKEND_SHA"
 
       - name: Copy types to frontend
         run: |
