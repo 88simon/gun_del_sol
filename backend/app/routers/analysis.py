@@ -86,9 +86,7 @@ def run_token_analysis_sync(
             error_msg = result.get("error", "No transactions found")
             log_info("Analysis found no data - skipping database save", wallets_found=0)
             metrics_collector.job_completed(job_id, 0, result.get("api_credits_used", 0))
-            update_analysis_job(
-                job_id, {"status": "completed", "result": result, "error": error_msg}
-            )
+            update_analysis_job(job_id, {"status": "completed", "result": result, "error": error_msg})
             return
 
         # Generate acronym
@@ -214,7 +212,7 @@ async def analyze_token(request: AnalyzeTokenRequest):
         "Token analysis queued",
         token_address=sanitize_address(request.address),
         min_usd=min_usd,
-        max_wallets=settings.walletCount
+        max_wallets=settings.walletCount,
     )
 
     # Submit to thread pool

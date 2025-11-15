@@ -40,9 +40,4 @@ async def get_health():
     success_rate = metrics_collector.get_success_rate()
     ws_stats = metrics_collector.get_websocket_stats()
 
-    return {
-        "status": "healthy",
-        "queue": queue_depth,
-        "success_rate": success_rate,
-        "websocket": ws_stats
-    }
+    return {"status": "healthy", "queue": queue_depth, "success_rate": success_rate, "websocket": ws_stats}

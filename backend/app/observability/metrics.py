@@ -22,6 +22,7 @@ from typing import Dict, List, Optional
 @dataclass
 class JobMetrics:
     """Metrics for a single analysis job"""
+
     job_id: str
     status: str
     queued_at: float
@@ -70,11 +71,7 @@ class MetricsCollector:
     def job_queued(self, job_id: str):
         """Record that a job was queued"""
         with self._lock:
-            self._jobs[job_id] = JobMetrics(
-                job_id=job_id,
-                status="queued",
-                queued_at=time.time()
-            )
+            self._jobs[job_id] = JobMetrics(job_id=job_id, status="queued", queued_at=time.time())
 
     def job_started(self, job_id: str):
         """Record that a job started processing"""
@@ -117,8 +114,7 @@ class MetricsCollector:
         """Get average processing time for completed jobs"""
         with self._lock:
             completed_jobs = [
-                j for j in self._jobs.values()
-                if j.status == "completed" and j.processing_time_seconds > 0
+                j for j in self._jobs.values() if j.status == "completed" and j.processing_time_seconds > 0
             ]
             if not completed_jobs:
                 return 0.0
@@ -127,10 +123,7 @@ class MetricsCollector:
     def get_average_queue_time(self) -> float:
         """Get average queue time for jobs"""
         with self._lock:
-            jobs_with_queue_time = [
-                j for j in self._jobs.values()
-                if j.queue_time_seconds > 0
-            ]
+            jobs_with_queue_time = [j for j in self._jobs.values() if j.queue_time_seconds > 0]
             if not jobs_with_queue_time:
                 return 0.0
             return sum(j.queue_time_seconds for j in jobs_with_queue_time) / len(jobs_with_queue_time)
@@ -138,10 +131,7 @@ class MetricsCollector:
     def get_success_rate(self) -> float:
         """Get job success rate (0.0 to 1.0)"""
         with self._lock:
-            finished_jobs = [
-                j for j in self._jobs.values()
-                if j.status in ("completed", "failed")
-            ]
+            finished_jobs = [j for j in self._jobs.values() if j.status in ("completed", "failed")]
             if not finished_jobs:
                 return 0.0
             completed = sum(1 for j in finished_jobs if j.status == "completed")
@@ -174,7 +164,7 @@ class MetricsCollector:
             return {
                 "active_connections": self._websocket_connections,
                 "messages_sent": self._websocket_messages_sent,
-                "messages_received": self._websocket_messages_received
+                "messages_received": self._websocket_messages_received,
             }
 
     # HTTP metrics
@@ -191,10 +181,7 @@ class MetricsCollector:
     def get_http_stats(self) -> Dict[str, Dict[str, int]]:
         """Get HTTP request statistics"""
         with self._lock:
-            return {
-                "requests": dict(self._http_requests),
-                "errors": dict(self._http_errors)
-            }
+            return {"requests": dict(self._http_requests), "errors": dict(self._http_errors)}
 
     # Prometheus metrics format
     def get_prometheus_metrics(self) -> str:

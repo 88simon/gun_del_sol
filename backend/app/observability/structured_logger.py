@@ -13,13 +13,13 @@ Provides JSON-formatted logging with:
 import json
 import logging
 import sys
+from contextvars import ContextVar
 from datetime import datetime
 from typing import Any, Dict, Optional
-from contextvars import ContextVar
 
 # Context variables for request/job tracking
-request_id_ctx: ContextVar[Optional[str]] = ContextVar('request_id', default=None)
-job_id_ctx: ContextVar[Optional[str]] = ContextVar('job_id', default=None)
+request_id_ctx: ContextVar[Optional[str]] = ContextVar("request_id", default=None)
+job_id_ctx: ContextVar[Optional[str]] = ContextVar("job_id", default=None)
 
 
 def sanitize_address(address: str) -> str:
@@ -59,21 +59,35 @@ class StructuredFormatter(logging.Formatter):
 
         # Add extra fields from the record
         for key, value in record.__dict__.items():
-            if key not in ['name', 'msg', 'args', 'created', 'filename', 'funcName',
-                          'levelname', 'levelno', 'lineno', 'module', 'msecs',
-                          'message', 'pathname', 'process', 'processName',
-                          'relativeCreated', 'thread', 'threadName', 'exc_info',
-                          'exc_text', 'stack_info']:
+            if key not in [
+                "name",
+                "msg",
+                "args",
+                "created",
+                "filename",
+                "funcName",
+                "levelname",
+                "levelno",
+                "lineno",
+                "module",
+                "msecs",
+                "message",
+                "pathname",
+                "process",
+                "processName",
+                "relativeCreated",
+                "thread",
+                "threadName",
+                "exc_info",
+                "exc_text",
+                "stack_info",
+            ]:
                 log_data[key] = value
 
         return json.dumps(log_data)
 
 
-def setup_logger(
-    name: str = "gun_del_sol",
-    level: int = logging.INFO,
-    json_output: bool = True
-) -> logging.Logger:
+def setup_logger(name: str = "gun_del_sol", level: int = logging.INFO, json_output: bool = True) -> logging.Logger:
     """
     Setup a structured logger instance
 
@@ -99,9 +113,7 @@ def setup_logger(
     if json_output:
         formatter = StructuredFormatter()
     else:
-        formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        )
+        formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
     handler.setFormatter(formatter)
     logger.addHandler(handler)
@@ -154,29 +166,16 @@ def log_debug(message: str, **kwargs):
 def log_analysis_start(job_id: str, token_address: str):
     """Log analysis job start"""
     set_job_id(job_id)
-    log_info(
-        "Analysis job started",
-        token_address=sanitize_address(token_address),
-        status="started"
-    )
+    log_info("Analysis job started", token_address=sanitize_address(token_address), status="started")
 
 
 def log_analysis_complete(job_id: str, wallet_count: int, credits_used: int):
     """Log analysis job completion"""
     set_job_id(job_id)
-    log_info(
-        "Analysis job completed",
-        wallets_found=wallet_count,
-        credits_used=credits_used,
-        status="completed"
-    )
+    log_info("Analysis job completed", wallets_found=wallet_count, credits_used=credits_used, status="completed")
 
 
 def log_analysis_failed(job_id: str, error: str):
     """Log analysis job failure"""
     set_job_id(job_id)
-    log_error(
-        "Analysis job failed",
-        error=error,
-        status="failed"
-    )
+    log_error("Analysis job failed", error=error, status="failed")
