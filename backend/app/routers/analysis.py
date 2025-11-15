@@ -17,6 +17,16 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 
 import analyzed_tokens_db as db
+from app.observability import (
+    log_analysis_complete,
+    log_analysis_failed,
+    log_analysis_start,
+    log_error,
+    log_info,
+    metrics_collector,
+    sanitize_address,
+    set_job_id,
+)
 from app.settings import CURRENT_API_SETTINGS, HELIUS_API_KEY
 from app.state import ANALYSIS_EXECUTOR, get_all_analysis_jobs, get_analysis_job, set_analysis_job, update_analysis_job
 from app.utils.models import (
@@ -30,7 +40,6 @@ from app.utils.models import (
 from app.utils.validators import is_valid_solana_address
 from app.websocket import get_connection_manager
 from helius_api import TokenAnalyzer, generate_axiom_export, generate_token_acronym
-from secure_logging import log_error
 
 router = APIRouter()
 
@@ -46,8 +55,9 @@ def run_token_analysis_sync(
 ):
     """Synchronous worker function for background thread pool"""
     try:
-        token_display = f"{token_address[:4]}...{token_address[-4:]}" if len(token_address) >= 12 else "****"
-        print(f"[Job {job_id}] Starting analysis for {token_display}")
+        # Start metrics tracking
+        metrics_collector.job_started(job_id)
+        log_analysis_start(job_id, token_address)
         update_analysis_job(job_id, {"status": "processing"})
 
         analyzer = TokenAnalyzer(HELIUS_API_KEY)
@@ -73,10 +83,10 @@ def run_token_analysis_sync(
         # Check if analysis found any meaningful data
         early_bidders = result.get("early_bidders", [])
         if len(early_bidders) == 0 and token_info is None:
-            print(f"[Job {job_id}] Analysis found no data - skipping database save")
-            update_analysis_job(
-                job_id, {"status": "completed", "result": result, "error": result.get("error", "No transactions found")}
-            )
+            error_msg = result.get("error", "No transactions found")
+            log_info("Analysis found no data - skipping database save", wallets_found=0)
+            metrics_collector.job_completed(job_id, 0, result.get("api_credits_used", 0))
+            update_analysis_job(job_id, {"status": "completed", "result": result, "error": error_msg})
             return
 
         # Generate acronym
@@ -104,7 +114,7 @@ def run_token_analysis_sync(
             credits_used=result.get("api_credits_used", 0),
             max_wallets=max_wallets,
         )
-        print(f"[Job {job_id}] Saved to database (ID: {token_id})")
+        log_info("Saved token to database", token_id=token_id, acronym=acronym)
 
         # Get file paths
         analysis_filepath = db.get_analysis_file_path(token_id, token_name, in_trash=False)
@@ -137,7 +147,10 @@ def run_token_analysis_sync(
             },
         )
 
-        print(f"[Job {job_id}] Analysis completed successfully")
+        # Track completion metrics
+        credits_used = result.get("api_credits_used", 0)
+        metrics_collector.job_completed(job_id, len(early_bidders), credits_used)
+        log_analysis_complete(job_id, len(early_bidders), credits_used)
 
         # Send WebSocket notification
         try:
@@ -157,13 +170,15 @@ def run_token_analysis_sync(
             manager = get_connection_manager()
             loop.run_until_complete(manager.broadcast(notification_message))
             loop.close()
-            print(f"[Job {job_id}] WebSocket notification sent")
+            log_info("WebSocket notification sent", event="analysis_complete")
         except Exception as notify_error:
-            print(f"[Job {job_id}] Failed to send WebSocket notification: {notify_error}")
+            log_error("Failed to send WebSocket notification", error=str(notify_error))
 
     except Exception as e:
-        print(f"[Job {job_id}] Analysis failed: {e}")
-        update_analysis_job(job_id, {"status": "failed", "error": str(e)})
+        error_msg = str(e)
+        metrics_collector.job_failed(job_id, error_msg)
+        log_analysis_failed(job_id, error_msg)
+        update_analysis_job(job_id, {"status": "failed", "error": error_msg})
 
 
 @router.post("/analyze/token", status_code=202, response_model=QueueTokenResponse)
@@ -191,6 +206,15 @@ async def analyze_token(request: AnalyzeTokenRequest):
     }
     set_analysis_job(job_id, job_data)
 
+    # Track metrics
+    metrics_collector.job_queued(job_id)
+    log_info(
+        "Token analysis queued",
+        token_address=sanitize_address(request.address),
+        min_usd=min_usd,
+        max_wallets=settings.walletCount,
+    )
+
     # Submit to thread pool
     ANALYSIS_EXECUTOR.submit(
         run_token_analysis_sync,
@@ -202,9 +226,6 @@ async def analyze_token(request: AnalyzeTokenRequest):
         settings.maxCreditsPerAnalysis,
         settings.walletCount,
     )
-
-    token_display = f"{request.address[:4]}...{request.address[-4:]}"
-    print(f"[OK] Queued token analysis: {token_display} (Job ID: {job_id})")
 
     return {
         "status": "queued",

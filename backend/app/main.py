@@ -13,7 +13,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import ORJSONResponse
 
 # Import routers
-from app.routers import analysis, settings_debug, tags, tokens, wallets, watchlist, webhooks
+from app.routers import analysis, metrics, settings_debug, tags, tokens, wallets, watchlist, webhooks
 from app.utils.models import AnalysisCompleteNotification, AnalysisStartNotification
 
 # Import WebSocket manager and notification endpoints
@@ -52,6 +52,7 @@ def create_app() -> FastAPI:
 
     # Register routers
     app.include_router(settings_debug.router, tags=["Settings & Health"])
+    app.include_router(metrics.router, tags=["Metrics"])
     app.include_router(watchlist.router, tags=["Watchlist"])
     app.include_router(tokens.router, tags=["Tokens"])
     app.include_router(analysis.router, tags=["Analysis"])
@@ -63,19 +64,27 @@ def create_app() -> FastAPI:
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):
         """WebSocket endpoint for real-time notifications"""
+        from app.observability import metrics_collector
+
         manager = get_connection_manager()
         await manager.connect(websocket)
+        metrics_collector.websocket_connected()
+
         try:
             # Keep connection alive and handle any incoming messages
             while True:
                 data = await websocket.receive_text()
+                metrics_collector.websocket_message_received()
                 # Echo back for heartbeat/testing
                 await websocket.send_json({"type": "pong", "data": data})
+                metrics_collector.websocket_message_sent()
         except WebSocketDisconnect:
             manager.disconnect(websocket)
+            metrics_collector.websocket_disconnected()
         except Exception as e:
             logger.error(f"[WebSocket] Error: {e}")
             manager.disconnect(websocket)
+            metrics_collector.websocket_disconnected()
 
     # WebSocket notification endpoints (HTTP triggers)
     @app.post("/notify/analysis_complete")
